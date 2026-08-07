@@ -1,8 +1,51 @@
-# ThunderScope v0.10.3
+# ThunderScope v0.11.0
 
 ThunderScope is a local War Thunder telemetry, tactical-map, host-audio and
 flight-analysis dashboard. It reads the game's port `8111` and provides a
 heading-up tablet map plus a separate secondary-monitor data display.
+
+
+## v0.11.0 — mission navigation and route planning
+
+The tablet tactical map now doubles as a lightweight mission-navigation display.
+Press **NAV** on the map to create and manage a route before or during a sortie.
+
+New navigation features:
+
+- Add custom waypoints anywhere on the map.
+- Tap recognised objective/base icons to select a target point.
+- Tap runway lines to set a home or divert airfield.
+- Draw a complete multi-leg route from the aircraft through all planned points.
+- Show live bearing, distance, steering correction, map-derived ground speed and ETA.
+- Show the estimated clock time of arrival for the active point.
+- Show direct bearing, distance and ETA to the selected home airfield.
+- Automatically advance to the next route point inside a configurable arrival radius.
+- Reorder, rename, activate, pause and remove route points from the tablet.
+- Preserve the active plan across browser refreshes through `data/navigation.json`.
+- Clear stale routes automatically when War Thunder reports a new map generation.
+- Extend the selected home runway centreline and show cross-track offset inside 20 km.
+
+### Creating a route
+
+1. Open `/map` and press **NAV**.
+2. Select **TARGET**, **HOME**, **DIVERT** or **+ WAYPOINT**.
+3. Tap an existing map objective/runway, or tap empty map space for a custom point.
+4. Repeat to build the required sequence.
+5. Use the arrow buttons beside a route entry to reorder it.
+6. Press an entry itself to make that point the active destination.
+7. Leave automatic advancement enabled, or use **PREV** and **NEXT** manually.
+
+The active navigation card remains visible when the planner is closed. Its ETA is
+calculated using smoothed ground speed measured from consecutive tactical-map
+positions rather than indicated airspeed.
+
+### Navigation limitations
+
+- Routes are straight segments between points; terrain and threat avoidance remain manual.
+- The feature guides the aircraft to a selected point but does not calculate bomb release, CCIP or weapon ballistics.
+- Friendly/enemy ownership is not inferred for manually selected airfields; select the correct home runway yourself.
+- Runway guidance is geometric centreline guidance only. War Thunder does not provide a reliable runway elevation for a synthetic glidepath.
+- Distance and ETA require valid `map_min` and `map_max` scale data. Route drawing still works if scale data is unavailable.
 
 ## v0.10.3 — complete Betty playback repair
 
@@ -177,7 +220,7 @@ This requires the game PC to permit LAN access to port 8111.
 
 ## Existing features
 
-- Heading-up tablet tactical map with smooth 10 Hz follow and unobtrusive alerts
+- Heading-up tablet tactical map with smooth 10 Hz follow, route planning, target/home guidance and alerts
 - Adaptive flight dashboard and landing assistance
 - Host Betty alerts with per-cue WAV overrides
 - Cross-platform Windows/Linux audio playback
@@ -187,11 +230,12 @@ This requires the game PC to permit LAN access to port 8111.
 
 ## Upgrade
 
-Extract v0.10.3 over the existing folder while retaining:
+Extract v0.11.0 over the existing folder while retaining:
 
 ```text
 data/settings.json
 data/thunderscope.db
+data/navigation.json
 ```
 
 Existing settings migrate automatically. Clear the tablet kiosk browser cache

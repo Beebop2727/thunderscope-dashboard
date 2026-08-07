@@ -3,16 +3,110 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#050908"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="manifest" href="/manifest.webmanifest"><title>ThunderScope Map</title><link rel="stylesheet" href="/static/css/styles.css?v=0.10.3">
+  <meta name="theme-color" content="#050908">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>ThunderScope Navigation Map</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=0.11.0">
 </head>
-<body class="map-page"><div class="map-shell" id="mapShell">
-  <canvas id="mapCanvas" aria-label="Live War Thunder tactical map"></canvas>
-  <header class="map-topbar glass-panel"><a class="compact-brand" href="/"><span class="brand-mark small"><span></span></span><span><b>ThunderScope</b><small>TACTICAL MAP</small></span></a><div class="live-state"><span class="status-dot" id="mapStatusDot"></span><span id="mapStatusText">WAITING FOR MAP</span></div></header>
+<body class="map-page">
+<div class="map-shell" id="mapShell">
+  <canvas id="mapCanvas" aria-label="Live War Thunder tactical and navigation map"></canvas>
+
+  <header class="map-topbar glass-panel">
+    <a class="compact-brand" href="/">
+      <span class="brand-mark small"><span></span></span>
+      <span><b>ThunderScope</b><small>TACTICAL NAVIGATION</small></span>
+    </a>
+    <div class="live-state"><span class="status-dot" id="mapStatusDot"></span><span id="mapStatusText">WAITING FOR MAP</span></div>
+  </header>
+
   <div class="map-alert-stack" id="mapAlertStack" aria-live="assertive"></div>
   <div class="map-orientation-badge glass-panel" id="orientationBadge">HEADING UP</div>
-  <aside class="map-flight-strip glass-panel"><div><small>IAS</small><strong id="mapIas">—</strong><span>km/h</span></div><div><small>ALT</small><strong id="mapAlt">—</strong><span>m</span></div><div><small>HDG</small><strong id="mapHeading">—</strong><span>deg</span></div></aside>
-  <nav class="map-controls glass-panel"><button id="orientationMap" class="map-text-button">HDG</button><button id="resetMap">◎</button><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="toggleAlerts" title="Toggle alerts">♢</button><button id="fullscreenMap">⛶</button></nav>
-  <div class="map-help glass-panel" id="mapHelp">Aircraft follow active · heading up · safety alerts enabled</div>
+
+  <aside class="map-navigation-hud glass-panel hidden" id="navigationHud" aria-live="polite">
+    <div class="map-navigation-hud-head"><span id="navHudRole">ACTIVE LEG</span><strong id="navHudName">—</strong></div>
+    <div class="map-navigation-hud-grid">
+      <div><small>BRG</small><strong id="navHudBearing">—</strong><span>°</span></div>
+      <div><small>DIST</small><strong id="navHudDistance">—</strong><span>km</span></div>
+      <div><small>ETA</small><strong id="navHudEta">—</strong><span id="navHudEtaClock">—</span></div>
+      <div><small>STEER</small><strong id="navHudSteer">—</strong><span id="navHudTrend">—</span></div>
+    </div>
+  </aside>
+
+  <section class="map-navigation-panel glass-panel hidden" id="navigationPanel" aria-label="Route planner">
+    <header>
+      <div><small>MISSION NAVIGATION</small><strong>Route planner</strong></div>
+      <button id="closeNavigation" aria-label="Close route planner">×</button>
+    </header>
+
+    <div class="nav-mode-grid" role="group" aria-label="Map point placement mode">
+      <button type="button" data-nav-mode="waypoint">+ WAYPOINT</button>
+      <button type="button" data-nav-mode="target">◎ TARGET</button>
+      <button type="button" data-nav-mode="home">⌂ HOME</button>
+      <button type="button" data-nav-mode="divert">◇ DIVERT</button>
+    </div>
+    <p class="nav-map-hint" id="navigationHint">Choose a point type, then tap the map or an existing objective/airfield.</p>
+
+    <div class="nav-scale-status" id="navScaleStatus">Waiting for map scale…</div>
+
+    <section class="nav-current-leg">
+      <small>ACTIVE DESTINATION</small>
+      <strong id="navPanelName">No route selected</strong>
+      <div class="nav-current-metrics">
+        <span><b id="navPanelBearing">—</b> bearing</span>
+        <span><b id="navPanelDistance">—</b> distance</span>
+        <span><b id="navPanelEta">—</b> ETA</span>
+      </div>
+      <div class="nav-steering-bar" aria-label="Heading correction"><span id="navSteeringMarker"></span></div>
+      <p id="navPanelSteer">Add a target or waypoint to begin.</p>
+    </section>
+
+    <section class="nav-home-summary hidden" id="navHomeSummary">
+      <div><small>HOME PLATE</small><strong id="navHomeName">—</strong></div>
+      <span id="navHomeMetrics">—</span>
+    </section>
+
+    <section class="nav-approach-summary hidden" id="navApproachSummary">
+      <div><small>RUNWAY GUIDE</small><strong id="navRunwayHeading">—</strong></div>
+      <span id="navRunwayMetrics">—</span>
+    </section>
+
+    <div class="nav-route-heading"><span>ROUTE</span><span id="navRouteTotal">0 points</span></div>
+    <ol class="nav-route-list" id="navigationRouteList"></ol>
+
+    <div class="nav-route-actions">
+      <button type="button" id="activateNavigation">ACTIVATE</button>
+      <button type="button" id="previousNavigation">PREV</button>
+      <button type="button" id="nextNavigation">NEXT</button>
+      <button type="button" id="clearNavigation" class="danger">CLEAR</button>
+    </div>
+    <label class="nav-auto-row"><input type="checkbox" id="navAutoAdvance" checked> Automatically advance within <input type="number" id="navArrivalRadius" min="100" max="5000" step="50" value="750"> m</label>
+  </section>
+
+  <aside class="map-flight-strip glass-panel">
+    <div><small>IAS</small><strong id="mapIas">—</strong><span>km/h</span></div>
+    <div><small>ALT</small><strong id="mapAlt">—</strong><span>m</span></div>
+    <div><small>HDG</small><strong id="mapHeading">—</strong><span>deg</span></div>
+    <div><small>GS</small><strong id="mapGroundSpeed">—</strong><span>km/h</span></div>
+  </aside>
+
+  <nav class="map-controls glass-panel">
+    <button id="orientationMap" class="map-text-button">HDG</button>
+    <button id="resetMap" aria-label="Reset map view">◎</button>
+    <button id="zoomIn" aria-label="Zoom in">+</button>
+    <button id="zoomOut" aria-label="Zoom out">−</button>
+    <button id="toggleAlerts" title="Toggle alerts">♢</button>
+    <button id="fullscreenMap" aria-label="Toggle fullscreen">⛶</button>
+    <button id="toggleNavigation" class="map-wide-button map-text-button">NAV</button>
+  </nav>
+
+  <div class="map-toast glass-panel hidden" id="mapToast" aria-live="polite"></div>
+  <div class="map-help glass-panel" id="mapHelp">Tap NAV to add a target, route and home airfield</div>
   <div class="map-wait" id="mapWait"><div class="radar-loader"><span></span></div><h1>Waiting for tactical map</h1><p>Enter a match or test flight in War Thunder.</p></div>
-</div><script src="/static/js/map.js?v=0.10.3" defer></script></body></html>
+</div>
+<script src="/static/js/map.js?v=0.11.0" defer></script>
+</body>
+</html>

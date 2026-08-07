@@ -8,6 +8,19 @@ const orientationButton = document.getElementById('orientationMap');
 const orientationBadge = document.getElementById('orientationBadge');
 const alertStack = document.getElementById('mapAlertStack');
 const alertToggle = document.getElementById('toggleAlerts');
+const navigationPanel = document.getElementById('navigationPanel');
+const navigationHud = document.getElementById('navigationHud');
+const navigationHint = document.getElementById('navigationHint');
+const navigationRouteList = document.getElementById('navigationRouteList');
+const navigationToggle = document.getElementById('toggleNavigation');
+const navigationClose = document.getElementById('closeNavigation');
+const navigationActivate = document.getElementById('activateNavigation');
+const navigationPrevious = document.getElementById('previousNavigation');
+const navigationNext = document.getElementById('nextNavigation');
+const navigationClear = document.getElementById('clearNavigation');
+const navigationAutoAdvance = document.getElementById('navAutoAdvance');
+const navigationArrivalRadius = document.getElementById('navArrivalRadius');
+const mapToast = document.getElementById('mapToast');
 
 let mapImage = null;
 let mapObjects = [];
@@ -36,6 +49,37 @@ let mapSocket = null;
 let mapReconnectTimer = null;
 let mapStreamOpen = false;
 let lastMapSequence = -1;
+let latestMapInfo = {};
+let mapScale = null;
+let renderTransform = null;
+let latestHeading = null;
+let latestAltitude = null;
+let latestIas = null;
+let groundSpeedMps = null;
+let lastPlayerSample = null;
+let navigationMode = null;
+let navigationPanelOpen = false;
+let navigationSaveTimer = null;
+let navigationSaveInFlight = false;
+let lastRouteUiSignature = '';
+let lastNavigationDistance = null;
+let lastNavigationDistanceAt = 0;
+let lastNavigationPointId = null;
+let closingRateMps = null;
+let lastAutomaticAdvanceAt = 0;
+let toastTimer = null;
+let pointerTapStart = null;
+let touchTapStart = null;
+let navigationState = {
+  version: 1,
+  revision: 0,
+  map_generation: null,
+  active: false,
+  active_index: 0,
+  auto_advance: true,
+  arrival_radius_m: 750,
+  points: [],
+};
 
 setTimeout(() => document.getElementById('mapHelp')?.classList.add('hidden'), 5000);
 
@@ -188,6 +232,592 @@ function point(rect, x, y) {
   };
 }
 
+
+function mapGenerationValue(info = latestMapInfo) {
+  return info?.map_generation === undefined || info?.map_generation === null
+    ? null
+    : String(info.map_generation);
+}
+
+function numericPair(value) {
+  if (Array.isArray(value) && value.length >= 2) {
+    const a = number(value[0]);
+    const b = number(value[1]);
+    return a === null || b === null ? null : [a, b];
+  }
+  if (value && typeof value === 'object') {
+    const a = number(value.x ?? value[0]);
+    const b = number(value.y ?? value[1]);
+    return a === null || b === null ? null : [a, b];
+  }
+  return null;
+}
+
+function extractMapScale(info) {
+  const min = numericPair(info?.map_min ?? info?.mapMin ?? info?.min);
+  const max = numericPair(info?.map_max ?? info?.mapMax ?? info?.max);
+  let width = min && max ? Math.abs(max[0] - min[0]) : null;
+  let height = min && max ? Math.abs(max[1] - min[1]) : null;
+  if (!width || !height) {
+    width = number(info?.map_width ?? info?.mapWidth ?? info?.width_m);
+    height = number(info?.map_height ?? info?.mapHeight ?? info?.height_m);
+  }
+  if (!width || !height || width < 500 || height < 500 || width > 3000000 || height > 3000000) return null;
+  return { width, height, diagonal: Math.hypot(width, height) };
+}
+
+function metresVector(from, to) {
+  if (!mapScale || !from || !to) return null;
+  return {
+    east: (to.x - from.x) * mapScale.width,
+    north: (from.y - to.y) * mapScale.height,
+  };
+}
+
+function mapDistanceMetres(from, to) {
+  const vector = metresVector(from, to);
+  return vector ? Math.hypot(vector.east, vector.north) : null;
+}
+
+function mapBearingDegrees(from, to) {
+  const vector = metresVector(from, to);
+  if (!vector || Math.hypot(vector.east, vector.north) < 0.1) return null;
+  return (Math.atan2(vector.east, vector.north) * 180 / Math.PI + 360) % 360;
+}
+
+function headingDifference(target, current) {
+  if (target === null || current === null) return null;
+  return ((target - current + 540) % 360) - 180;
+}
+
+function currentPlayerHeading() {
+  if (latestHeading !== null) return (latestHeading + 360) % 360;
+  const player = mapObjects.find(isPlayer);
+  const dx = number(player?.dx);
+  const dy = number(player?.dy);
+  if (dx === null || dy === null || Math.hypot(dx, dy) < 0.00001) return null;
+  return (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+}
+
+function formatDistance(metres) {
+  if (metres === null || !Number.isFinite(metres)) return '—';
+  if (metres < 1000) return `${Math.round(metres)} m`;
+  return `${(metres / 1000).toFixed(metres < 10000 ? 1 : 0)} km`;
+}
+
+function formatEta(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 3600) return '—';
+  const rounded = Math.round(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const secs = rounded % 60;
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : `${minutes}:${String(secs).padStart(2, '0')}`;
+}
+
+function formatArrivalClock(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 24 * 3600) return '—';
+  return new Date(Date.now() + seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function roleLabel(role) {
+  return ({ target: 'TARGET', home: 'HOME', divert: 'DIVERT', waypoint: 'WAYPOINT' })[role] || 'POINT';
+}
+
+function roleSymbol(role) {
+  return ({ target: '◎', home: '⌂', divert: '◇', waypoint: '◆' })[role] || '◆';
+}
+
+function newPointId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
+  return `nav-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+}
+
+function sanitiseNavigationClient(value) {
+  const points = Array.isArray(value?.points) ? value.points.filter(item =>
+    item && Number.isFinite(Number(item.x)) && Number.isFinite(Number(item.y))
+  ).slice(0, 32).map(item => ({
+    id: String(item.id || newPointId()),
+    name: String(item.name || roleLabel(item.role)).slice(0, 48),
+    role: ['waypoint', 'target', 'home', 'divert'].includes(item.role) ? item.role : 'waypoint',
+    kind: String(item.kind || 'custom').slice(0, 24),
+    x: clamp(Number(item.x), 0, 1),
+    y: clamp(Number(item.y), 0, 1),
+    ...(item.runway && [item.runway.sx, item.runway.sy, item.runway.ex, item.runway.ey].every(v => Number.isFinite(Number(v))) ? {
+      runway: {
+        sx: clamp(Number(item.runway.sx), 0, 1), sy: clamp(Number(item.runway.sy), 0, 1),
+        ex: clamp(Number(item.runway.ex), 0, 1), ey: clamp(Number(item.runway.ey), 0, 1),
+      },
+    } : {}),
+  })) : [];
+  return {
+    version: 1,
+    revision: Number(value?.revision) || 0,
+    map_generation: value?.map_generation === null || value?.map_generation === undefined ? null : String(value.map_generation),
+    active: Boolean(value?.active) && points.length > 0,
+    active_index: clamp(Math.trunc(Number(value?.active_index) || 0), 0, Math.max(0, points.length - 1)),
+    auto_advance: value?.auto_advance !== false,
+    arrival_radius_m: clamp(Math.trunc(Number(value?.arrival_radius_m) || 750), 100, 5000),
+    points,
+  };
+}
+
+async function loadNavigation() {
+  try {
+    const response = await fetch('/api/navigation', { cache: 'no-store' });
+    if (!response.ok) throw new Error('navigation unavailable');
+    navigationState = sanitiseNavigationClient(await response.json());
+  } catch {
+    navigationState = sanitiseNavigationClient(navigationState);
+  }
+  syncNavigationControls();
+  renderNavigationUi(true);
+}
+
+function scheduleNavigationSave(immediate = false) {
+  clearTimeout(navigationSaveTimer);
+  const run = async () => {
+    navigationSaveInFlight = true;
+    try {
+      const response = await fetch('/api/navigation', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(navigationState),
+      });
+      if (!response.ok) throw new Error('save failed');
+      navigationState = sanitiseNavigationClient(await response.json());
+    } catch (error) {
+      console.error('Unable to save navigation plan', error);
+      showMapToast('Navigation plan could not be saved');
+    } finally {
+      navigationSaveInFlight = false;
+      renderNavigationUi(true);
+    }
+  };
+  if (immediate) run();
+  else navigationSaveTimer = setTimeout(run, 180);
+}
+
+function applyRemoteNavigation(value) {
+  const incoming = sanitiseNavigationClient(value);
+  if (navigationSaveInFlight || incoming.revision <= navigationState.revision) return;
+  navigationState = incoming;
+  syncNavigationControls();
+  renderNavigationUi(true);
+}
+
+function resetNavigationForMap(nextGeneration) {
+  navigationState = sanitiseNavigationClient({ map_generation: nextGeneration });
+  lastNavigationPointId = null;
+  lastNavigationDistance = null;
+  closingRateMps = null;
+  syncNavigationControls();
+  renderNavigationUi(true);
+  scheduleNavigationSave(true);
+}
+
+function showMapToast(message) {
+  clearTimeout(toastTimer);
+  mapToast.textContent = message;
+  mapToast.classList.remove('hidden');
+  toastTimer = setTimeout(() => mapToast.classList.add('hidden'), 2600);
+}
+
+function setNavigationMode(mode) {
+  navigationMode = navigationMode === mode ? null : mode;
+  document.querySelectorAll('[data-nav-mode]').forEach(button => button.classList.toggle('active', button.dataset.navMode === navigationMode));
+  if (!navigationMode) navigationHint.textContent = 'Choose a point type, then tap the map or an existing objective/airfield.';
+  else navigationHint.textContent = `${roleLabel(navigationMode)} placement active — tap the map${navigationMode === 'home' || navigationMode === 'divert' ? ' or a runway' : ' or an objective'}.`;
+  canvas.classList.toggle('placing-point', Boolean(navigationMode));
+}
+
+function toggleNavigationPanel(force) {
+  navigationPanelOpen = typeof force === 'boolean' ? force : !navigationPanelOpen;
+  navigationPanel.classList.toggle('hidden', !navigationPanelOpen);
+  navigationHud.classList.toggle('panel-open', navigationPanelOpen);
+  navigationToggle.classList.toggle('active', navigationPanelOpen);
+  if (!navigationPanelOpen) setNavigationMode(null);
+}
+
+function syncNavigationControls() {
+  navigationAutoAdvance.checked = navigationState.auto_advance;
+  navigationArrivalRadius.value = navigationState.arrival_radius_m;
+  navigationActivate.textContent = navigationState.active ? 'PAUSE' : 'ACTIVATE';
+}
+
+function isAirfieldObject(obj) {
+  const text = `${obj?.type || ''} ${obj?.icon || ''} ${obj?.icon_bg || ''}`.toLowerCase();
+  return text.includes('airfield') || text.includes('runway') || (obj?.type === 'airfield' && [obj.sx, obj.sy, obj.ex, obj.ey].every(v => v !== undefined));
+}
+
+function isObjectiveObject(obj) {
+  const text = `${obj?.type || ''} ${obj?.icon || ''} ${obj?.icon_bg || ''}`.toLowerCase();
+  return /(bomb|objective|capture|defend|point|zone|base)/.test(text);
+}
+
+function objectNavigationCandidate(obj) {
+  if (isPlayer(obj)) return null;
+  if (isAirfieldObject(obj) && [obj.sx, obj.sy, obj.ex, obj.ey].every(v => number(v) !== null)) {
+    return {
+      kind: 'airfield',
+      name: 'AIRFIELD',
+      x: (Number(obj.sx) + Number(obj.ex)) / 2,
+      y: (Number(obj.sy) + Number(obj.ey)) / 2,
+      runway: { sx: Number(obj.sx), sy: Number(obj.sy), ex: Number(obj.ex), ey: Number(obj.ey) },
+    };
+  }
+  if (obj?.x === undefined || obj?.y === undefined || number(obj.x) === null || number(obj.y) === null) return null;
+  if (!isObjectiveObject(obj)) return null;
+  const sourceName = String(obj.icon || obj.type || 'OBJECTIVE').replace(/[_-]+/g, ' ').trim().toUpperCase();
+  return { kind: 'objective', name: sourceName || 'OBJECTIVE', x: Number(obj.x), y: Number(obj.y) };
+}
+
+function mapToScreen(x, y) {
+  if (!renderTransform) return null;
+  const { rect, playerPoint, rotation, effectiveScale, anchor } = renderTransform;
+  const p = point(rect, x, y);
+  const dx = (p.x - playerPoint.x) * effectiveScale;
+  const dy = (p.y - playerPoint.y) * effectiveScale;
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  return { x: anchor.x + dx * cos - dy * sin, y: anchor.y + dx * sin + dy * cos };
+}
+
+function screenToMap(x, y) {
+  if (!renderTransform) return null;
+  const { rect, playerPoint, rotation, effectiveScale, anchor } = renderTransform;
+  const dx = x - anchor.x;
+  const dy = y - anchor.y;
+  const cos = Math.cos(-rotation);
+  const sin = Math.sin(-rotation);
+  const localX = (dx * cos - dy * sin) / effectiveScale + playerPoint.x;
+  const localY = (dx * sin + dy * cos) / effectiveScale + playerPoint.y;
+  return { x: clamp((localX - rect.x) / rect.width, 0, 1), y: clamp((localY - rect.y) / rect.height, 0, 1) };
+}
+
+function nearestNavigationObject(screenX, screenY) {
+  let best = null;
+  for (const obj of mapObjects) {
+    const candidate = objectNavigationCandidate(obj);
+    if (!candidate) continue;
+    const screen = mapToScreen(candidate.x, candidate.y);
+    if (!screen) continue;
+    const distance = Math.hypot(screen.x - screenX, screen.y - screenY);
+    if (distance <= 34 && (!best || distance < best.distance)) best = { ...candidate, distance };
+  }
+  return best;
+}
+
+function defaultPointName(role, candidate) {
+  if (role === 'target') return candidate?.kind === 'objective' ? `TARGET · ${candidate.name}` : 'TARGET';
+  if (role === 'home') return candidate?.kind === 'airfield' ? 'HOME AIRFIELD' : 'HOME';
+  if (role === 'divert') return candidate?.kind === 'airfield' ? 'DIVERT AIRFIELD' : 'DIVERT';
+  return `WP ${navigationState.points.filter(item => item.role === 'waypoint').length + 1}`;
+}
+
+function addNavigationPoint(role, location, candidate = null) {
+  const pointValue = {
+    id: newPointId(),
+    name: defaultPointName(role, candidate),
+    role,
+    kind: candidate?.kind || 'custom',
+    x: location.x,
+    y: location.y,
+    ...(candidate?.runway ? { runway: candidate.runway } : {}),
+  };
+  if (role !== 'waypoint') {
+    const existing = navigationState.points.findIndex(item => item.role === role);
+    if (existing >= 0) {
+      pointValue.id = navigationState.points[existing].id;
+      navigationState.points.splice(existing, 1, pointValue);
+    } else navigationState.points.push(pointValue);
+  } else navigationState.points.push(pointValue);
+
+  if (navigationState.points.length === 1) navigationState.active_index = 0;
+  navigationState.active = true;
+  navigationState.map_generation = mapGenerationValue();
+  navigationState = sanitiseNavigationClient(navigationState);
+  setNavigationMode(null);
+  syncNavigationControls();
+  renderNavigationUi(true);
+  scheduleNavigationSave();
+  showMapToast(`${roleLabel(role)} set: ${pointValue.name}`);
+}
+
+function handleMapTap(clientX, clientY) {
+  if (!navigationMode || !renderTransform) return false;
+  const rect = canvas.getBoundingClientRect();
+  const screenX = clientX - rect.left;
+  const screenY = clientY - rect.top;
+  const mapLocation = screenToMap(screenX, screenY);
+  if (!mapLocation) return false;
+  const candidate = nearestNavigationObject(screenX, screenY);
+  if ((navigationMode === 'home' || navigationMode === 'divert') && candidate && candidate.kind !== 'airfield') {
+    showMapToast('Select a runway line or tap empty map space for a manual airfield point');
+    return true;
+  }
+  addNavigationPoint(navigationMode, candidate || mapLocation, candidate);
+  return true;
+}
+
+function activeNavigationPoint() {
+  return navigationState.active && navigationState.points.length ? navigationState.points[navigationState.active_index] : null;
+}
+
+function homeNavigationPoint() {
+  return navigationState.points.find(pointValue => pointValue.role === 'home') || null;
+}
+
+function approachData(home = homeNavigationPoint()) {
+  if (!home?.runway || !targetPlayer || !mapScale) return null;
+  const a = { x: home.runway.sx, y: home.runway.sy };
+  const b = { x: home.runway.ex, y: home.runway.ey };
+  const headingAB = mapBearingDegrees(a, b);
+  const headingBA = mapBearingDegrees(b, a);
+  const currentHeading = currentPlayerHeading();
+  const chooseAB = currentHeading === null || Math.abs(headingDifference(headingAB, currentHeading)) <= Math.abs(headingDifference(headingBA, currentHeading));
+  const threshold = chooseAB ? a : b;
+  const farEnd = chooseAB ? b : a;
+  const runwayHeading = chooseAB ? headingAB : headingBA;
+  const distance = mapDistanceMetres(targetPlayer, threshold);
+  const runwayVector = metresVector(threshold, farEnd);
+  const playerVector = metresVector(threshold, targetPlayer);
+  if (!runwayVector || !playerVector) return null;
+  const runwayLength = Math.hypot(runwayVector.east, runwayVector.north);
+  if (runwayLength < 1) return null;
+  const ue = runwayVector.east / runwayLength;
+  const un = runwayVector.north / runwayLength;
+  const crossTrack = ue * playerVector.north - un * playerVector.east;
+  const alongTrack = ue * playerVector.east + un * playerVector.north;
+  return { threshold, farEnd, runwayHeading, distance, crossTrack, alongTrack, runwayLength };
+}
+
+function navigationMetrics() {
+  const pointValue = activeNavigationPoint();
+  if (!pointValue || !targetPlayer || !mapScale) return null;
+  const distance = mapDistanceMetres(targetPlayer, pointValue);
+  const bearing = mapBearingDegrees(targetPlayer, pointValue);
+  const heading = currentPlayerHeading();
+  const correction = headingDifference(bearing, heading);
+  const eta = groundSpeedMps !== null && groundSpeedMps > 4 ? distance / groundSpeedMps : null;
+  const now = performance.now() / 1000;
+  if (lastNavigationPointId !== pointValue.id) {
+    lastNavigationPointId = pointValue.id;
+    lastNavigationDistance = distance;
+    lastNavigationDistanceAt = now;
+    closingRateMps = null;
+  } else if (lastNavigationDistance !== null && now - lastNavigationDistanceAt >= 0.35) {
+    const rawClosing = (lastNavigationDistance - distance) / (now - lastNavigationDistanceAt);
+    if (Number.isFinite(rawClosing) && Math.abs(rawClosing) < 2500) closingRateMps = closingRateMps === null ? rawClosing : closingRateMps * 0.7 + rawClosing * 0.3;
+    lastNavigationDistance = distance;
+    lastNavigationDistanceAt = now;
+  }
+  return { point: pointValue, distance, bearing, heading, correction, eta, closingRateMps };
+}
+
+function totalRemainingDistance() {
+  if (!targetPlayer || !mapScale || !navigationState.points.length) return null;
+  let total = 0;
+  let previous = targetPlayer;
+  const start = navigationState.active ? navigationState.active_index : 0;
+  for (let index = start; index < navigationState.points.length; index++) {
+    total += mapDistanceMetres(previous, navigationState.points[index]) || 0;
+    previous = navigationState.points[index];
+  }
+  return total;
+}
+
+function steerText(correction) {
+  if (correction === null) return 'HEADING UNAVAILABLE';
+  if (Math.abs(correction) < 2) return 'ON COURSE';
+  return `${Math.round(Math.abs(correction))}° ${correction > 0 ? 'RIGHT' : 'LEFT'}`;
+}
+
+function renderRouteList(force = false) {
+  const signature = JSON.stringify(navigationState.points.map(item => [item.id, item.name, item.role, item.x, item.y])) + `|${navigationState.active_index}|${navigationState.active}`;
+  if (!force && signature === lastRouteUiSignature) return;
+  lastRouteUiSignature = signature;
+  if (!navigationState.points.length) {
+    navigationRouteList.innerHTML = '<li class="nav-route-empty">No route points yet.</li>';
+    return;
+  }
+  navigationRouteList.innerHTML = navigationState.points.map((item, index) => `
+    <li class="${navigationState.active && index === navigationState.active_index ? 'active' : ''}" data-point-id="${escapeHtml(item.id)}">
+      <button class="nav-route-select" data-action="select" title="Make active"><span>${roleSymbol(item.role)}</span><div><small>${roleLabel(item.role)} ${String(index + 1).padStart(2, '0')}</small><strong>${escapeHtml(item.name)}</strong></div></button>
+      <div class="nav-route-item-actions">
+        <button data-action="up" aria-label="Move up">↑</button><button data-action="down" aria-label="Move down">↓</button><button data-action="rename" aria-label="Rename">✎</button><button data-action="remove" aria-label="Remove">×</button>
+      </div>
+    </li>`).join('');
+}
+
+function renderNavigationUi(forceRoute = false) {
+  renderRouteList(forceRoute);
+  const metrics = navigationMetrics();
+  const totalDistance = totalRemainingDistance();
+  document.getElementById('navRouteTotal').textContent = navigationState.points.length
+    ? `${navigationState.points.length} point${navigationState.points.length === 1 ? '' : 's'}${totalDistance !== null ? ` · ${formatDistance(totalDistance)}` : ''}`
+    : '0 points';
+  document.getElementById('navScaleStatus').textContent = mapScale
+    ? `MAP SCALE ${(mapScale.width / 1000).toFixed(1)} × ${(mapScale.height / 1000).toFixed(1)} KM · GS ${groundSpeedMps === null ? '—' : Math.round(groundSpeedMps * 3.6)} KM/H`
+    : 'Map scale unavailable — route drawing works, distance and ETA are paused.';
+
+  const hudVisible = Boolean(metrics);
+  navigationHud.classList.toggle('hidden', !hudVisible);
+  if (metrics) {
+    const trend = metrics.closingRateMps === null ? 'CALCULATING' : metrics.closingRateMps < -5 ? 'MOVING AWAY' : metrics.closingRateMps < 5 ? 'CROSS-TRACK' : `CLOSING ${Math.round(metrics.closingRateMps * 3.6)} KM/H`;
+    document.getElementById('navHudRole').textContent = roleLabel(metrics.point.role);
+    document.getElementById('navHudName').textContent = metrics.point.name;
+    document.getElementById('navHudBearing').textContent = metrics.bearing === null ? '—' : String(Math.round(metrics.bearing)).padStart(3, '0');
+    document.getElementById('navHudDistance').textContent = metrics.distance < 1000 ? (metrics.distance / 1000).toFixed(2) : (metrics.distance / 1000).toFixed(1);
+    document.getElementById('navHudEta').textContent = formatEta(metrics.eta);
+    document.getElementById('navHudEtaClock').textContent = formatArrivalClock(metrics.eta);
+    document.getElementById('navHudSteer').textContent = metrics.correction === null ? '—' : Math.abs(metrics.correction) < 2 ? 'ON CRS' : `${Math.round(Math.abs(metrics.correction))}° ${metrics.correction > 0 ? 'R' : 'L'}`;
+    document.getElementById('navHudTrend').textContent = trend;
+    document.getElementById('navPanelName').textContent = metrics.point.name;
+    document.getElementById('navPanelBearing').textContent = metrics.bearing === null ? '—' : `${String(Math.round(metrics.bearing)).padStart(3, '0')}°`;
+    document.getElementById('navPanelDistance').textContent = formatDistance(metrics.distance);
+    document.getElementById('navPanelEta').textContent = formatEta(metrics.eta);
+    document.getElementById('navPanelSteer').textContent = `${steerText(metrics.correction)} · ${trend}`;
+    const marker = document.getElementById('navSteeringMarker');
+    marker.style.left = `${50 + clamp(metrics.correction || 0, -45, 45) / 45 * 48}%`;
+  } else {
+    document.getElementById('navPanelName').textContent = navigationState.points.length ? 'Route paused' : 'No route selected';
+    document.getElementById('navPanelBearing').textContent = '—';
+    document.getElementById('navPanelDistance').textContent = '—';
+    document.getElementById('navPanelEta').textContent = '—';
+    document.getElementById('navPanelSteer').textContent = navigationState.points.length ? 'Press ACTIVATE to resume navigation.' : 'Add a target or waypoint to begin.';
+    document.getElementById('navSteeringMarker').style.left = '50%';
+  }
+
+  const home = homeNavigationPoint();
+  const homeSummary = document.getElementById('navHomeSummary');
+  if (home && targetPlayer && mapScale) {
+    const distance = mapDistanceMetres(targetPlayer, home);
+    const bearing = mapBearingDegrees(targetPlayer, home);
+    const eta = groundSpeedMps !== null && groundSpeedMps > 4 ? distance / groundSpeedMps : null;
+    homeSummary.classList.remove('hidden');
+    document.getElementById('navHomeName').textContent = home.name;
+    document.getElementById('navHomeMetrics').textContent = `${String(Math.round(bearing)).padStart(3, '0')}° · ${formatDistance(distance)} · ${formatEta(eta)}`;
+  } else homeSummary.classList.add('hidden');
+
+  const approach = approachData(home);
+  const approachSummary = document.getElementById('navApproachSummary');
+  if (approach && approach.distance <= 20000) {
+    approachSummary.classList.remove('hidden');
+    document.getElementById('navRunwayHeading').textContent = `RUNWAY ${String(Math.round(approach.runwayHeading / 10) % 36 || 36).padStart(2, '0')} · ${String(Math.round(approach.runwayHeading)).padStart(3, '0')}°`;
+    const side = Math.abs(approach.crossTrack) < 20 ? 'CENTRELINE' : `${Math.round(Math.abs(approach.crossTrack))} m ${approach.crossTrack > 0 ? 'LEFT' : 'RIGHT'}`;
+    document.getElementById('navRunwayMetrics').textContent = `${formatDistance(approach.distance)} to threshold · ${side}`;
+  } else approachSummary.classList.add('hidden');
+
+  if (metrics && navigationState.auto_advance && metrics.distance <= navigationState.arrival_radius_m && performance.now() - lastAutomaticAdvanceAt > 5000) {
+    lastAutomaticAdvanceAt = performance.now();
+    advanceNavigation(true);
+  }
+}
+
+function advanceNavigation(automatic = false) {
+  if (!navigationState.points.length) return;
+  if (navigationState.active_index < navigationState.points.length - 1) {
+    navigationState.active_index += 1;
+    navigationState.active = true;
+    showMapToast(`${automatic ? 'Waypoint reached · ' : ''}Navigating to ${navigationState.points[navigationState.active_index].name}`);
+  } else {
+    navigationState.active = false;
+    showMapToast('Route complete');
+  }
+  lastNavigationPointId = null;
+  syncNavigationControls();
+  renderNavigationUi(true);
+  scheduleNavigationSave();
+}
+
+function previousNavigation() {
+  if (!navigationState.points.length) return;
+  navigationState.active_index = Math.max(0, navigationState.active_index - 1);
+  navigationState.active = true;
+  lastNavigationPointId = null;
+  syncNavigationControls();
+  renderNavigationUi(true);
+  scheduleNavigationSave();
+}
+
+function drawNavigationRoute(rect, symbolScale) {
+  if (!navigationState.points.length) return;
+  const activeIndex = navigationState.active ? navigationState.active_index : -1;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  let previous = targetPlayer ? point(rect, targetPlayer.x, targetPlayer.y) : null;
+  navigationState.points.forEach((item, index) => {
+    const current = point(rect, item.x, item.y);
+    if (previous) {
+      ctx.beginPath();
+      ctx.moveTo(previous.x, previous.y);
+      ctx.lineTo(current.x, current.y);
+      const activeLeg = index === activeIndex;
+      ctx.strokeStyle = activeLeg ? 'rgba(116,241,197,.98)' : index < activeIndex ? 'rgba(116,241,197,.25)' : 'rgba(231,244,239,.55)';
+      ctx.lineWidth = (activeLeg ? 3.1 : 1.8) * symbolScale;
+      ctx.setLineDash(activeLeg ? [] : [7 * symbolScale, 7 * symbolScale]);
+      ctx.stroke();
+    }
+    previous = current;
+  });
+  ctx.setLineDash([]);
+
+  const approach = approachData();
+  if (approach) {
+    const threshold = point(rect, approach.threshold.x, approach.threshold.y);
+    const farEnd = point(rect, approach.farEnd.x, approach.farEnd.y);
+    const vx = farEnd.x - threshold.x;
+    const vy = farEnd.y - threshold.y;
+    ctx.strokeStyle = 'rgba(116,241,197,.45)';
+    ctx.lineWidth = 1.5 * symbolScale;
+    ctx.setLineDash([10 * symbolScale, 5 * symbolScale]);
+    ctx.beginPath();
+    ctx.moveTo(threshold.x - vx * 4, threshold.y - vy * 4);
+    ctx.lineTo(farEnd.x + vx * 0.5, farEnd.y + vy * 0.5);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  navigationState.points.forEach((item, index) => {
+    const p = point(rect, item.x, item.y);
+    const active = index === activeIndex;
+    const size = (active ? 10 : 8) * symbolScale;
+    ctx.beginPath();
+    if (item.role === 'target') {
+      ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+      ctx.moveTo(p.x - size * 1.45, p.y); ctx.lineTo(p.x + size * 1.45, p.y);
+      ctx.moveTo(p.x, p.y - size * 1.45); ctx.lineTo(p.x, p.y + size * 1.45);
+    } else if (item.role === 'home') {
+      ctx.rect(p.x - size, p.y - size, size * 2, size * 2);
+    } else {
+      ctx.moveTo(p.x, p.y - size); ctx.lineTo(p.x + size, p.y); ctx.lineTo(p.x, p.y + size); ctx.lineTo(p.x - size, p.y); ctx.closePath();
+    }
+    ctx.strokeStyle = item.role === 'target' ? '#f4d477' : item.role === 'home' ? '#74f1c5' : item.role === 'divert' ? '#c6b5ff' : '#edf7f3';
+    ctx.fillStyle = 'rgba(5,9,8,.75)';
+    ctx.lineWidth = (active ? 2.7 : 1.8) * symbolScale;
+    ctx.fill(); ctx.stroke();
+    if (active) {
+      ctx.beginPath(); ctx.arc(p.x, p.y, size * 1.75, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(116,241,197,.55)'; ctx.lineWidth = 1.2 * symbolScale; ctx.stroke();
+    }
+    ctx.font = `${10 * symbolScale}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = 'rgba(0,0,0,.9)';
+    ctx.lineWidth = 3 * symbolScale;
+    const label = item.name.length > 22 ? `${item.name.slice(0, 21)}…` : item.name;
+    ctx.strokeText(label, p.x, p.y + size * 1.9);
+    ctx.fillText(label, p.x, p.y + size * 1.9);
+  });
+  ctx.restore();
+}
+
 function updatePlayerTracking() {
   const player = mapObjects.find(isPlayer);
   if (!player || player.x === undefined || player.y === undefined) return;
@@ -198,6 +828,19 @@ function updatePlayerTracking() {
 
   targetPlayer = { x, y };
   if (!displayPlayer) displayPlayer = { ...targetPlayer };
+
+  const sampleAt = performance.now() / 1000;
+  if (mapScale && lastPlayerSample) {
+    const elapsed = sampleAt - lastPlayerSample.at;
+    const travelled = mapDistanceMetres(lastPlayerSample, targetPlayer);
+    if (elapsed >= 0.04 && elapsed <= 2 && travelled !== null && travelled < mapScale.diagonal * 0.08) {
+      const rawSpeed = travelled / elapsed;
+      if (rawSpeed <= 2500) groundSpeedMps = groundSpeedMps === null ? rawSpeed : groundSpeedMps * 0.78 + rawSpeed * 0.22;
+    }
+  }
+  lastPlayerSample = { x, y, at: sampleAt };
+  if (latestIas !== null && latestIas < 2 && groundSpeedMps !== null && groundSpeedMps < 5) groundSpeedMps = 0;
+  document.getElementById('mapGroundSpeed').textContent = groundSpeedMps === null ? '—' : Math.round(groundSpeedMps * 3.6);
 
   const angle = aircraftAngle(player);
   if (angle !== null) targetRotation = -angle;
@@ -391,6 +1034,7 @@ function render() {
     height,
   );
   const symbolScale = 1 / effectiveScale;
+  renderTransform = { rect, playerPoint, rotation, effectiveScale, anchor, width, height };
 
   ctx.save();
   ctx.translate(anchor.x, anchor.y);
@@ -403,6 +1047,7 @@ function render() {
   ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
 
   drawTrail(rect, symbolScale);
+  drawNavigationRoute(rect, symbolScale);
   for (const obj of mapObjects) drawLineObject(obj, rect, symbolScale);
   for (const obj of mapObjects) drawPointObject(obj, rect, symbolScale);
   ctx.restore();
@@ -456,13 +1101,25 @@ async function loadMapImage() {
 
 async function applyMapInfo(info) {
   if (!info || typeof info !== 'object') return;
+  latestMapInfo = info;
+  mapScale = extractMapScale(info);
   const nextGeneration = String(info.map_generation ?? 'unknown');
+  if (navigationState.map_generation === null && nextGeneration !== 'unknown') {
+    navigationState.map_generation = nextGeneration;
+    scheduleNavigationSave();
+  } else if (navigationState.map_generation && nextGeneration !== 'unknown' && navigationState.map_generation !== nextGeneration && navigationState.points.length) {
+    resetNavigationForMap(nextGeneration);
+    showMapToast('New map detected · previous route cleared');
+  }
   if (!mapImage || nextGeneration !== mapGeneration) {
     mapGeneration = nextGeneration;
     playerTrail.length = 0;
     lastTrailPoint = null;
+    lastPlayerSample = null;
+    groundSpeedMps = null;
     await loadMapImage();
   }
+  renderNavigationUi();
 }
 async function updateMapInfo() {
   try { const r=await fetch('/api/map/info',{cache:'no-store'}); if(!r.ok) throw new Error(); await applyMapInfo(await r.json()); }
@@ -471,7 +1128,7 @@ async function updateMapInfo() {
 function applyMapObjects(objects, sequence=null) {
   if (sequence!==null && Number.isFinite(sequence) && sequence===lastMapSequence) return;
   if (sequence!==null && Number.isFinite(sequence)) lastMapSequence=sequence;
-  mapObjects=Array.isArray(objects)?objects:[]; updatePlayerTracking();
+  mapObjects=Array.isArray(objects)?objects:[]; updatePlayerTracking(); renderNavigationUi();
   statusDot.classList.add('online'); statusText.textContent=`TACTICAL MAP LIVE · 10 HZ · ${mapObjects.length} OBJECTS`; waitPanel.classList.add('hidden');
 }
 async function updateObjects() {
@@ -481,10 +1138,12 @@ async function updateObjects() {
 function applyTelemetryPayload(payload) {
   lastTelemetrySuccess=Date.now(); const state=payload.state||{}, indicators=payload.indicators||{};
   const ias=number(pick(state,['IAS, km/h'])), altitude=number(pick(state,['H, m'])), heading=number(pick(indicators,['compass','compass1','compass2']));
+  latestIas = ias; latestAltitude = altitude; latestHeading = heading;
   document.getElementById('mapIas').textContent=ias===null?'—':Math.round(ias);
   document.getElementById('mapAlt').textContent=altitude===null?'—':Math.round(altitude);
   document.getElementById('mapHeading').textContent=heading===null?'—':String(Math.round((heading+360)%360)).padStart(3,'0');
   renderMapAlerts(payload);
+  renderNavigationUi();
 }
 async function updateFlightStrip() {
   try { const r=await fetch('/api/telemetry',{cache:'no-store'}); if(!r.ok) throw new Error(); applyTelemetryPayload(await r.json()); }
@@ -494,7 +1153,7 @@ function connectMapStream() {
   clearTimeout(mapReconnectTimer); const protocol=location.protocol==='https:'?'wss:':'ws:';
   mapSocket=new WebSocket(`${protocol}//${location.host}/ws/map`);
   mapSocket.addEventListener('open',()=>{mapStreamOpen=true;statusDot.classList.add('online');statusText.textContent='TACTICAL MAP LIVE · 10 HZ';});
-  mapSocket.addEventListener('message',event=>{try{const m=JSON.parse(event.data);applyMapObjects(m.objects,Number(m.sequence));if(m.map_info)applyMapInfo(m.map_info);if(m.telemetry)applyTelemetryPayload(m.telemetry);}catch(err){console.error(err);}});
+  mapSocket.addEventListener('message',event=>{try{const m=JSON.parse(event.data);applyMapObjects(m.objects,Number(m.sequence));if(m.map_info)applyMapInfo(m.map_info);if(m.telemetry)applyTelemetryPayload(m.telemetry);if(m.navigation)applyRemoteNavigation(m.navigation);}catch(err){console.error(err);}});
   mapSocket.addEventListener('close',()=>{mapStreamOpen=false;statusDot.classList.remove('online');statusText.textContent='RECONNECTING MAP STREAM';mapReconnectTimer=setTimeout(connectMapStream,1000);});
   mapSocket.addEventListener('error',()=>mapSocket.close());
 }
@@ -538,21 +1197,29 @@ canvas.addEventListener('wheel', event => {
 canvas.addEventListener('pointerdown', event => {
   if (event.pointerType === 'touch') return;
   dragging = true;
+  pointerTapStart = { x: event.clientX, y: event.clientY, moved: false };
   dragStart = { x: event.clientX - panX, y: event.clientY - panY };
   canvas.setPointerCapture(event.pointerId);
 });
 canvas.addEventListener('pointermove', event => {
   if (!dragging || event.pointerType === 'touch') return;
+  if (pointerTapStart && Math.hypot(event.clientX - pointerTapStart.x, event.clientY - pointerTapStart.y) > 7) pointerTapStart.moved = true;
   panX = event.clientX - dragStart.x;
   panY = event.clientY - dragStart.y;
 });
-canvas.addEventListener('pointerup', () => { dragging = false; });
-canvas.addEventListener('pointercancel', () => { dragging = false; });
+canvas.addEventListener('pointerup', event => {
+  const tap = pointerTapStart && !pointerTapStart.moved;
+  pointerTapStart = null;
+  dragging = false;
+  if (tap) handleMapTap(event.clientX, event.clientY);
+});
+canvas.addEventListener('pointercancel', () => { dragging = false; pointerTapStart = null; });
 
 canvas.addEventListener('touchstart', event => {
   event.preventDefault();
   if (event.touches.length === 1) {
     const t = event.touches[0];
+    touchTapStart = { x: t.clientX, y: t.clientY, moved: false };
     dragStart = { x: t.clientX - panX, y: t.clientY - panY };
   } else if (event.touches.length === 2) {
     const [a, b] = event.touches;
@@ -564,6 +1231,7 @@ canvas.addEventListener('touchmove', event => {
   event.preventDefault();
   if (event.touches.length === 1 && dragStart) {
     const t = event.touches[0];
+    if (touchTapStart && Math.hypot(t.clientX - touchTapStart.x, t.clientY - touchTapStart.y) > 9) touchTapStart.moved = true;
     panX = t.clientX - dragStart.x;
     panY = t.clientY - dragStart.y;
   } else if (event.touches.length === 2) {
@@ -580,10 +1248,14 @@ canvas.addEventListener('touchmove', event => {
     lastTouchMidpoint = midpoint;
   }
 }, { passive: false });
-canvas.addEventListener('touchend', () => {
+canvas.addEventListener('touchend', event => {
+  const ended = event.changedTouches?.[0];
+  const tap = touchTapStart && !touchTapStart.moved && ended;
   lastTouchDistance = null;
   lastTouchMidpoint = null;
   dragStart = null;
+  touchTapStart = null;
+  if (tap) handleMapTap(ended.clientX, ended.clientY);
 });
 
 orientationButton.addEventListener('click', () => {
@@ -597,6 +1269,63 @@ document.getElementById('zoomOut').addEventListener('click', () => setZoom(zoom 
 document.getElementById('resetMap').addEventListener('click', resetMapView);
 alertToggle.addEventListener('click', () => { alertsEnabled = !alertsEnabled; alertToggle.classList.toggle('muted', !alertsEnabled); if (!alertsEnabled) { alertStack.innerHTML = ''; lastAlertSignature = ''; } else { updateFlightStrip(); } });
 
+
+navigationToggle.addEventListener('click', () => toggleNavigationPanel());
+navigationClose.addEventListener('click', () => toggleNavigationPanel(false));
+document.querySelectorAll('[data-nav-mode]').forEach(button => button.addEventListener('click', () => setNavigationMode(button.dataset.navMode)));
+navigationActivate.addEventListener('click', () => {
+  if (!navigationState.points.length) return showMapToast('Add a route point first');
+  navigationState.active = !navigationState.active;
+  if (navigationState.active_index >= navigationState.points.length) navigationState.active_index = 0;
+  lastNavigationPointId = null;
+  syncNavigationControls(); renderNavigationUi(true); scheduleNavigationSave();
+});
+navigationPrevious.addEventListener('click', previousNavigation);
+navigationNext.addEventListener('click', () => advanceNavigation(false));
+navigationClear.addEventListener('click', () => {
+  if (!navigationState.points.length || window.confirm('Clear the complete navigation route?')) resetNavigationForMap(mapGenerationValue());
+});
+navigationAutoAdvance.addEventListener('change', () => {
+  navigationState.auto_advance = navigationAutoAdvance.checked;
+  scheduleNavigationSave();
+});
+navigationArrivalRadius.addEventListener('change', () => {
+  navigationState.arrival_radius_m = clamp(Math.trunc(Number(navigationArrivalRadius.value) || 750), 100, 5000);
+  navigationArrivalRadius.value = navigationState.arrival_radius_m;
+  scheduleNavigationSave();
+});
+navigationRouteList.addEventListener('click', event => {
+  const button = event.target.closest('button[data-action]');
+  const item = event.target.closest('li[data-point-id]');
+  if (!button || !item) return;
+  const index = navigationState.points.findIndex(pointValue => pointValue.id === item.dataset.pointId);
+  if (index < 0) return;
+  const action = button.dataset.action;
+  if (action === 'select') { navigationState.active_index = index; navigationState.active = true; lastNavigationPointId = null; }
+  if (action === 'up' && index > 0) {
+    [navigationState.points[index - 1], navigationState.points[index]] = [navigationState.points[index], navigationState.points[index - 1]];
+    if (navigationState.active_index === index) navigationState.active_index -= 1;
+    else if (navigationState.active_index === index - 1) navigationState.active_index += 1;
+  }
+  if (action === 'down' && index < navigationState.points.length - 1) {
+    [navigationState.points[index + 1], navigationState.points[index]] = [navigationState.points[index], navigationState.points[index + 1]];
+    if (navigationState.active_index === index) navigationState.active_index += 1;
+    else if (navigationState.active_index === index + 1) navigationState.active_index -= 1;
+  }
+  if (action === 'rename') {
+    const name = window.prompt('Point name', navigationState.points[index].name);
+    if (name?.trim()) navigationState.points[index].name = name.trim().slice(0, 48);
+  }
+  if (action === 'remove') {
+    navigationState.points.splice(index, 1);
+    navigationState.active_index = clamp(navigationState.active_index - (index < navigationState.active_index ? 1 : 0), 0, Math.max(0, navigationState.points.length - 1));
+    navigationState.active = navigationState.active && navigationState.points.length > 0;
+    lastNavigationPointId = null;
+  }
+  navigationState = sanitiseNavigationClient(navigationState);
+  syncNavigationControls(); renderNavigationUi(true); scheduleNavigationSave();
+});
+
 document.getElementById('fullscreenMap').addEventListener('click', async () => {
   if (!document.fullscreenElement) await shell.requestFullscreen?.();
   else await document.exitFullscreen?.();
@@ -604,12 +1333,15 @@ document.getElementById('fullscreenMap').addEventListener('click', async () => {
 
 window.addEventListener('resize', resize);
 resize();
-loadSharedSettings();
 updateOrientationUi();
-updateMapInfo();
-updateObjects();
-updateFlightStrip();
-connectMapStream();
+requestAnimationFrame(animate);
+
+async function initialiseMap() {
+  await Promise.allSettled([loadSharedSettings(), loadNavigation()]);
+  await Promise.allSettled([updateMapInfo(), updateObjects(), updateFlightStrip()]);
+  connectMapStream();
+}
+
+initialiseMap();
 setInterval(fallbackRefresh, 1000);
 setInterval(loadSharedSettings, 30000);
-requestAnimationFrame(animate);

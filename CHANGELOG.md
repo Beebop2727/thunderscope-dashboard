@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.11.0
+
+- Added tablet-map mission planning with custom waypoints, target, home and divert roles.
+- Added persistent route storage and cross-device synchronisation through `/api/navigation`.
+- Added map-scale-aware bearing, distance, route length and ETA calculations.
+- Added smoothed map-derived ground speed and estimated arrival clock time.
+- Added active-leg steering correction, closing/moving-away trend and automatic waypoint advancement.
+- Added route editing, point renaming, reordering, manual leg selection and configurable arrival radius.
+- Added direct home-airfield guidance and runway centreline/cross-track approach assistance.
+- Added automatic stale-route clearing when the War Thunder map generation changes.
+- Updated application, browser cache and package versioning to 0.11.0.
+
 ## 0.10.3
 
 - Rebuilt all 35 Betty cue WAVs from the original MP3 files without aggressive silence removal.

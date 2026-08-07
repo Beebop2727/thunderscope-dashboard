@@ -28,6 +28,7 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "thunderscope.db"
 SETTINGS_PATH = DATA_DIR / "settings.json"
+NAVIGATION_PATH = DATA_DIR / "navigation.json"
 WT_BASE_URL = os.getenv("WT_BASE_URL", "http://127.0.0.1:8111").rstrip("/")
 POLL_INTERVAL = max(0.025, float(os.getenv("POLL_INTERVAL", "0.05")))
 TELEMETRY_STREAM_INTERVAL = max(0.05, float(os.getenv("TELEMETRY_STREAM_INTERVAL", "0.10")))
@@ -44,6 +45,18 @@ logging.basicConfig(
 logger = logging.getLogger("thunderscope")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+DEFAULT_NAVIGATION: dict[str, Any] = {
+    "version": 1,
+    "revision": 0,
+    "map_generation": None,
+    "active": False,
+    "active_index": 0,
+    "auto_advance": True,
+    "arrival_radius_m": 750,
+    "points": [],
+}
+
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "version": 11,
@@ -187,6 +200,93 @@ def save_settings(settings: dict[str, Any]) -> None:
     temp = SETTINGS_PATH.with_suffix(".tmp")
     temp.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     temp.replace(SETTINGS_PATH)
+
+
+
+def _finite_coordinate(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0.0 or number > 1.0:
+        return None
+    return round(number, 7)
+
+
+def sanitise_navigation(payload: Any, revision: int | None = None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        payload = {}
+    result = deep_copy(DEFAULT_NAVIGATION)
+    result["map_generation"] = (
+        str(payload.get("map_generation"))[:80]
+        if payload.get("map_generation") is not None
+        else None
+    )
+    result["active"] = bool(payload.get("active", False))
+    result["auto_advance"] = bool(payload.get("auto_advance", True))
+    try:
+        result["arrival_radius_m"] = int(
+            max(100, min(5000, float(payload.get("arrival_radius_m", 750))))
+        )
+    except (TypeError, ValueError):
+        result["arrival_radius_m"] = 750
+
+    points: list[dict[str, Any]] = []
+    raw_points = payload.get("points", [])
+    if isinstance(raw_points, list):
+        for raw in raw_points[:32]:
+            if not isinstance(raw, dict):
+                continue
+            x = _finite_coordinate(raw.get("x"))
+            y = _finite_coordinate(raw.get("y"))
+            if x is None or y is None:
+                continue
+            role = str(raw.get("role") or "waypoint").lower()
+            if role not in {"waypoint", "target", "home", "divert"}:
+                role = "waypoint"
+            kind = str(raw.get("kind") or "custom").lower()[:24]
+            point: dict[str, Any] = {
+                "id": str(raw.get("id") or uuid.uuid4().hex)[:64],
+                "name": str(raw.get("name") or role.title())[:48],
+                "role": role,
+                "kind": kind,
+                "x": x,
+                "y": y,
+            }
+            runway = raw.get("runway")
+            if isinstance(runway, dict):
+                sx = _finite_coordinate(runway.get("sx"))
+                sy = _finite_coordinate(runway.get("sy"))
+                ex = _finite_coordinate(runway.get("ex"))
+                ey = _finite_coordinate(runway.get("ey"))
+                if None not in (sx, sy, ex, ey):
+                    point["runway"] = {"sx": sx, "sy": sy, "ex": ex, "ey": ey}
+            points.append(point)
+    result["points"] = points
+    try:
+        active_index = int(payload.get("active_index", 0))
+    except (TypeError, ValueError):
+        active_index = 0
+    result["active_index"] = max(0, min(active_index, max(0, len(points) - 1)))
+    result["active"] = result["active"] and bool(points)
+    result["revision"] = int(revision if revision is not None else payload.get("revision", 0) or 0)
+    return result
+
+
+def load_navigation() -> dict[str, Any]:
+    if not NAVIGATION_PATH.exists():
+        return deep_copy(DEFAULT_NAVIGATION)
+    try:
+        return sanitise_navigation(json.loads(NAVIGATION_PATH.read_text(encoding="utf-8")))
+    except (OSError, ValueError, json.JSONDecodeError):
+        logger.exception("Navigation plan could not be read; using an empty plan")
+        return deep_copy(DEFAULT_NAVIGATION)
+
+
+def save_navigation(navigation: dict[str, Any]) -> None:
+    temp = NAVIGATION_PATH.with_suffix(".tmp")
+    temp.write_text(json.dumps(navigation, indent=2), encoding="utf-8")
+    temp.replace(NAVIGATION_PATH)
 
 
 def init_db() -> None:
@@ -471,12 +571,13 @@ host_audio = HostAudioService(BASE_DIR, logger)
 async def lifespan(app: FastAPI):
     init_db()
     app.state.settings = load_settings()
+    app.state.navigation = load_navigation()
     hub.audio_settings = lambda: app.state.settings
     await host_audio.start(app.state.settings)
     app.state.client = httpx.AsyncClient(
         timeout=httpx.Timeout(1.5, connect=0.5),
         limits=httpx.Limits(max_connections=24, max_keepalive_connections=12),
-        headers={"User-Agent": "ThunderScope/0.10.3"},
+        headers={"User-Agent": "ThunderScope/0.11.0"},
     )
     await hub.start(app.state.client)
     logger.info("War Thunder source: %s", WT_BASE_URL)
@@ -489,7 +590,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ThunderScope",
     description="Local War Thunder telemetry, tactical-map and flight-analysis dashboard",
-    version="0.10.3",
+    version="0.11.0",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -625,6 +726,29 @@ async def map_image() -> Response:
         media_type=upstream.headers.get("content-type", "image/png"),
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@app.get("/api/navigation")
+async def get_navigation(request: Request) -> dict[str, Any]:
+    return request.app.state.navigation
+
+
+@app.put("/api/navigation")
+async def put_navigation(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    current = request.app.state.navigation
+    navigation = sanitise_navigation(payload, revision=int(current.get("revision", 0)) + 1)
+    save_navigation(navigation)
+    request.app.state.navigation = navigation
+    return navigation
+
+
+@app.delete("/api/navigation")
+async def delete_navigation(request: Request) -> dict[str, Any]:
+    current = request.app.state.navigation
+    navigation = sanitise_navigation({}, revision=int(current.get("revision", 0)) + 1)
+    save_navigation(navigation)
+    request.app.state.navigation = navigation
+    return navigation
 
 
 @app.get("/api/settings")
@@ -763,7 +887,7 @@ async def map_websocket(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            await websocket.send_json({"sequence":hub.map_sequence,"objects":hub.latest_objects,"map_info":hub.latest_map_info,"telemetry":hub.latest,"timestamp":time.time()})
+            await websocket.send_json({"sequence":hub.map_sequence,"objects":hub.latest_objects,"map_info":hub.latest_map_info,"telemetry":hub.latest,"navigation":websocket.app.state.navigation,"timestamp":time.time()})
             await asyncio.sleep(MAP_STREAM_INTERVAL)
     except WebSocketDisconnect: return
     except Exception as exc:
