@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07100f">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>ThunderScope</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=0.10.3">
+</head>
+<body class="landing-page">
+  <main class="landing-shell">
+    <header class="brand-block">
+      <div class="brand-mark" aria-hidden="true"><span></span></div>
+      <div><p class="eyebrow">WAR THUNDER LOCAL TELEMETRY</p><h1>ThunderScope</h1><p class="subtitle">Choose the display intended for this screen.</p></div>
+    </header>
+
+    <section class="connection-strip" aria-live="polite">
+      <div class="status-dot" id="statusDot"></div>
+      <div><strong id="statusText">Checking War Thunder…</strong><span id="vehicleText">Start a match or test flight to provide live data.</span></div>
+    </section>
+
+    <section class="mode-grid">
+      <a class="mode-card map-card" href="/map">
+        <div class="mode-icon map-icon" aria-hidden="true"><span class="map-grid-lines"></span><span class="map-plane">▲</span></div>
+        <div class="mode-copy"><p class="eyebrow">HUAWEI TABLET</p><h2>Map display</h2><p>Heading-up tactical map with touch controls and safety alerts.</p></div>
+        <span class="mode-arrow">Open map <b>→</b></span>
+      </a>
+      <a class="mode-card data-card" href="/data">
+        <div class="mode-icon data-icon" aria-hidden="true"><span>842</span><small>IAS</small></div>
+        <div class="mode-copy"><p class="eyebrow">SECONDARY MONITOR</p><h2>Flight data</h2><p>Adaptive flight phases, energy, fuel, landing and performance testing.</p></div>
+        <span class="mode-arrow">Open data <b>→</b></span>
+      </a>
+    </section>
+
+    <nav class="utility-links">
+      <a href="/reports">After-action reports</a><a href="/settings">Profiles & alerts</a>
+    </nav>
+
+    <section class="device-address" id="deviceAddress" hidden><span>Tablet address</span><button id="copyAddress" type="button" title="Copy tablet address"></button></section>
+    <footer><span>Source: War Thunder on port 8111</span><span>ThunderScope <b>v0.6</b> · <span id="currentHost"></span></span></footer>
+  </main>
+  <script src="/static/js/home.js?v=0.10.3" defer></script>
+  <script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/service-worker.js').catch(()=>{});</script>
+</body>
+</html>

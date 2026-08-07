@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#050908"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.webmanifest"><title>ThunderScope Map</title><link rel="stylesheet" href="/static/css/styles.css?v=0.10.3">
+</head>
+<body class="map-page"><div class="map-shell" id="mapShell">
+  <canvas id="mapCanvas" aria-label="Live War Thunder tactical map"></canvas>
+  <header class="map-topbar glass-panel"><a class="compact-brand" href="/"><span class="brand-mark small"><span></span></span><span><b>ThunderScope</b><small>TACTICAL MAP</small></span></a><div class="live-state"><span class="status-dot" id="mapStatusDot"></span><span id="mapStatusText">WAITING FOR MAP</span></div></header>
+  <div class="map-alert-stack" id="mapAlertStack" aria-live="assertive"></div>
+  <div class="map-orientation-badge glass-panel" id="orientationBadge">HEADING UP</div>
+  <aside class="map-flight-strip glass-panel"><div><small>IAS</small><strong id="mapIas">—</strong><span>km/h</span></div><div><small>ALT</small><strong id="mapAlt">—</strong><span>m</span></div><div><small>HDG</small><strong id="mapHeading">—</strong><span>deg</span></div></aside>
+  <nav class="map-controls glass-panel"><button id="orientationMap" class="map-text-button">HDG</button><button id="resetMap">◎</button><button id="zoomIn">+</button><button id="zoomOut">−</button><button id="toggleAlerts" title="Toggle alerts">♢</button><button id="fullscreenMap">⛶</button></nav>
+  <div class="map-help glass-panel" id="mapHelp">Aircraft follow active · heading up · safety alerts enabled</div>
+  <div class="map-wait" id="mapWait"><div class="radar-loader"><span></span></div><h1>Waiting for tactical map</h1><p>Enter a match or test flight in War Thunder.</p></div>
+</div><script src="/static/js/map.js?v=0.10.3" defer></script></body></html>

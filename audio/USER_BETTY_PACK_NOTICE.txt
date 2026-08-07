@@ -1,0 +1,13 @@
+ThunderScope user-generated Bitchin' Betty TTS pack
+====================================================
+
+Thirty-five recordings in ThunderScope v0.10.1 were supplied directly by the
+project user across [Bitchin' Betty]2.zip and the later Gear Overspeed upload. The MP3 originals were converted to mono
+44.1 kHz 16-bit PCM WAV, trimmed, and loudness-normalised for consistent,
+low-latency playback on Windows and Linux.
+
+The user specifically requested that the high-angle warning say "AoA" rather
+than "Angle of attack".
+
+This notice describes provenance only. The user is responsible for complying
+with the terms of the TTS service used to generate the original recordings.

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07100f">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <title>ThunderScope Flight Data</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=0.10.3">
+</head>
+<body class="data-page">
+  <header class="data-header">
+    <a class="compact-brand" href="/"><span class="brand-mark small"><span></span></span><span><b>ThunderScope</b><small>FLIGHT DATA</small></span></a>
+    <div class="vehicle-title"><small>ACTIVE VEHICLE</small><strong id="vehicleName">NO AIRCRAFT DATA</strong></div>
+    <div class="header-status-cluster">
+      <div class="phase-badge" id="phaseBadge">STANDBY</div>
+      <div class="session-clock"><small>SESSION</small><strong id="sessionTime">00:00</strong></div>
+      <div class="live-state"><span class="status-dot" id="dataStatusDot"></span><span id="dataStatusText">CONNECTING</span></div>
+      <a class="header-icon-link" href="/reports" title="After-action reports">▥</a><a class="header-icon-link" href="/settings" title="Settings">⚙</a>
+    </div>
+  </header>
+
+  <main class="dashboard-shell">
+    <section class="advisory-strip" id="advisoryStrip" aria-live="polite"><span class="advisory-pill neutral">WAITING FOR TELEMETRY</span></section>
+
+    <nav class="mode-tabs" aria-label="Dashboard mode">
+      <button class="active" data-mode="auto">AUTO</button><button data-mode="combat">COMBAT</button><button data-mode="landing">LANDING</button><button data-mode="test">TEST</button>
+    </nav>
+
+    <section class="primary-metrics">
+      <article class="metric-card hero-metric"><span>INDICATED AIRSPEED</span><strong id="iasValue">—</strong><small>km/h</small></article>
+      <article class="metric-card"><span>MACH</span><strong id="machValue">—</strong><small>M</small></article>
+      <article class="metric-card hero-metric"><span>ALTITUDE</span><strong id="altValue">—</strong><small>metres</small></article>
+      <article class="metric-card"><span>CLIMB RATE</span><strong id="vsValue">—</strong><small>m/s</small></article>
+      <article class="metric-card"><span>G LOAD</span><strong id="gValue">—</strong><small>G</small></article>
+      <article class="metric-card"><span>ANGLE OF ATTACK</span><strong id="aoaValue">—</strong><small>degrees</small></article>
+    </section>
+
+    <section class="dashboard-columns">
+      <div class="dashboard-column wide-column">
+        <section class="panel-section dynamic-panel" id="combatPanel">
+          <div class="section-heading"><div><small>COMBAT PERFORMANCE</small><h2>Energy and manoeuvre</h2></div><span id="energyTrendLabel">CALCULATING</span></div>
+          <div class="performance-grid four-up">
+            <article class="performance-card energy-card"><span>ENERGY TREND</span><strong id="energyTrend">—</strong><small id="energyDelta">specific energy</small></article>
+            <article class="performance-card"><span>ACCELERATION</span><strong id="accelValue">—</strong><small>km/h per second</small></article>
+            <article class="performance-card"><span>TURN RATE</span><strong id="turnRateValue">—</strong><small>degrees per second</small></article>
+            <article class="performance-card"><span>TURN TIME</span><strong id="turnTimeValue">—</strong><small>estimated 360°</small></article>
+          </div>
+          <div class="turn-run" id="turnRun" hidden><span>SUSTAINED TURN</span><strong id="turnRunValue">—</strong><small id="turnRunDetail">Analysing manoeuvre…</small></div>
+        </section>
+
+        <section class="panel-section dynamic-panel landing-panel" id="landingPanel" hidden>
+          <div class="section-heading"><div><small>APPROACH ASSISTANT</small><h2>Landing state</h2></div><span id="landingStatus">MONITORING</span></div>
+          <div class="landing-grid">
+            <article><span>APPROACH SPEED</span><strong id="landingSpeed">—</strong><small id="landingSpeedCue">km/h</small></article>
+            <article><span>SINK RATE</span><strong id="landingSink">—</strong><small id="landingSinkCue">m/s</small></article>
+            <article><span>CONFIGURATION</span><strong id="landingConfig">—</strong><small id="landingConfigCue">gear / flaps</small></article>
+            <article><span>TOUCHDOWN</span><strong id="touchdownValue">ARMED</strong><small id="touchdownCue">awaiting landing</small></article>
+          </div>
+        </section>
+
+        <section class="panel-section dynamic-panel test-panel" id="testPanel" hidden>
+          <div class="section-heading"><div><small>PERFORMANCE LAB</small><h2>Repeatable flight tests</h2></div><span id="testState">IDLE</span></div>
+          <div class="test-controls">
+            <select id="testType"><option value="accel500900">500 → 900 km/h acceleration</option><option value="climb10005000">1,000 → 5,000 m climb</option><option value="turn">Sustained turn analysis</option><option value="manual">Manual timed run</option></select>
+            <button class="action-button" id="armTest">Arm test</button><button class="quiet-button" id="resetTest">Reset</button>
+          </div>
+          <div class="test-readout"><strong id="testResult">Select and arm a test</strong><span id="testDetail">ThunderScope will detect the start and finish thresholds automatically.</span></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><div><small>FLIGHT HISTORY</small><h2>Recent trends</h2></div><span>Last 60 seconds</span></div>
+          <div class="chart-grid"><article class="chart-card"><div><strong>IAS</strong><span>km/h</span></div><canvas id="iasChart"></canvas></article><article class="chart-card"><div><strong>Altitude</strong><span>m</span></div><canvas id="altChart"></canvas></article><article class="chart-card"><div><strong>Energy</strong><span>m equiv.</span></div><canvas id="energyChart"></canvas></article></div>
+        </section>
+      </div>
+
+      <div class="dashboard-column side-column">
+        <section class="panel-section fuel-panel">
+          <div class="section-heading"><div><small>FUEL INTELLIGENCE</small><h2>Endurance</h2></div><span id="fuelPercent">—</span></div>
+          <div class="fuel-readout"><strong id="fuelValue">—</strong><span>kg remaining</span></div><div class="progress-track"><span id="fuelBar"></span></div>
+          <div class="fuel-stats"><div><small>EST. ENDURANCE</small><strong id="fuelTime">—</strong></div><div><small>FLOW</small><strong id="fuelFlowSummary">—</strong></div><div><small>RESERVE TIME</small><strong id="reserveTime">—</strong></div><div><small>AB / WEP TIME</small><strong id="abTime">00:00</strong></div><div><small>USED</small><strong id="fuelUsed">—</strong></div><div><small>RESERVE</small><strong id="reservePct">25%</strong></div></div>
+        </section>
+
+        <section class="panel-section engine-section" id="engineSection">
+          <div class="section-heading"><div><small>PROPULSION</small><h2>Powerplant</h2></div><span id="engineHealth">NO DATA</span></div>
+          <div class="engine-summary" id="engineSummary">Engine data will appear when available.</div><div class="engine-grid" id="engineGrid" hidden></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><div><small>CONFIGURATION</small><h2>Aircraft state</h2></div></div>
+          <div class="airframe-list"><div><span>Landing gear</span><strong id="gearValue">—</strong></div><div><span>Flaps</span><strong id="flapsValue">—</strong></div><div><span>Airbrake</span><strong id="airbrakeValue">—</strong></div><div><span>Wing sweep</span><strong id="sweepValue">—</strong></div></div>
+        </section>
+
+        <section class="panel-section">
+          <div class="section-heading"><div><small>SESSION ENVELOPE</small><h2>Flight peaks</h2></div><button class="quiet-button" id="resetSession">Reset</button></div>
+          <div class="session-grid"><div><span>PEAK IAS</span><strong id="peakIasValue">—</strong></div><div><span>PEAK ALT</span><strong id="peakAltValue">—</strong></div><div><span>G ENVELOPE</span><strong id="gEnvelopeValue">—</strong></div><div><span>MAX AoA</span><strong id="peakAoaValue">—</strong></div></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script src="/static/js/data.js?v=0.10.3" defer></script>
+</body>
+</html>
