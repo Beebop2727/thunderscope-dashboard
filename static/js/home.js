@@ -30,8 +30,8 @@ async function loadServerInfo() {
   try {
     const response = await fetch('/api/server-info', { cache: 'no-store' });
     const info = await response.json();
-    if (info.lan_addresses?.length) {
-      const url = `${info.lan_addresses[0]}/map`;
+    const url = info.lan_map_addresses?.[0] || (info.lan_addresses?.[0] ? `${info.lan_addresses[0]}/map` : null);
+    if (url) {
       copyAddress.textContent = url;
       copyAddress.dataset.url = url;
       deviceAddress.hidden = false;

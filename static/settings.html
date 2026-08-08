@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#07100f">
   <title>ThunderScope Settings</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=0.11.0">
+  <link rel="stylesheet" href="/static/css/styles.css?v=0.13.4">
 </head>
 <body class="utility-page">
 <header class="utility-header">
@@ -38,6 +38,17 @@
     </section>
 
     <section class="settings-card">
+      <h2>Carrier approach profile</h2>
+      <label>Approach IAS minimum<input type="number" name="carrierApproachIasMin" min="40" max="1000" step="5"></label>
+      <label>Approach IAS maximum<input type="number" name="carrierApproachIasMax" min="50" max="1200" step="5"></label>
+      <label>Target approach AoA<input type="number" name="carrierTargetAoADeg" min="-10" max="40" step="0.5"></label>
+      <label>AoA tolerance<input type="number" name="carrierAoAToleranceDeg" min="0.5" max="15" step="0.5"></label>
+      <label>Maximum final bank<input type="number" name="carrierMaxBankDeg" min="1" max="60" step="1"></label>
+      <label>Maximum sink rate<input type="number" name="carrierMaxSinkMps" min="-30" max="-0.5" step="0.5"></label>
+      <label>Preferred glidepath<input type="number" name="carrierGlidepathDeg" min="1.5" max="8" step="0.1"></label>
+    </section>
+
+    <section class="settings-card">
       <h2>Envelope warnings</h2>
       <label>High AoA (degrees)<input type="number" name="highAoADeg" min="1" max="90" step="0.5"></label>
       <label>Stall warning AoA (degrees)<input type="number" name="stallAoADeg" min="1" max="90" step="0.5"></label>
@@ -46,7 +57,6 @@
       <label>Negative G warning<input type="number" name="lowG" min="-20" max="0" step="0.1"></label>
       <label>Gear overspeed (km/h)<input type="number" name="gearOverspeedKmh" min="50" max="1500"></label>
       <label>Flap overspeed (km/h)<input type="number" name="flapOverspeedKmh" min="50" max="1500"></label>
-      <label>Engine mismatch (%)<input type="number" name="engineMismatchPct" min="1" max="100"></label>
       <label>Aircraft overspeed (km/h)<input type="number" name="overspeedKmh" min="100" max="4000" step="10"></label>
     </section>
 
@@ -59,12 +69,39 @@
       <label>Energy-low IAS (km/h)<input type="number" name="energyLowIasKmh" min="50" max="1200" step="10"></label>
       <label>Energy-low deceleration (km/h/s)<input type="number" name="energyLowDecelKmhS" min="-100" max="-1" step="0.5"></label>
       <label>Speedbrake warning throttle (%)<input type="number" name="speedbrakeThrottlePct" min="0" max="110" step="1"></label>
-      <label>Oil temperature warning (°C)<input type="number" name="engineOilTempWarningC" min="40" max="300" step="1"></label>
-      <label>Water temperature warning (°C)<input type="number" name="engineWaterTempWarningC" min="40" max="300" step="1"></label>
-      <label>Cylinder-head warning (°C)<input type="number" name="engineHeadTempWarningC" min="80" max="500" step="5"></label>
-      <label>Oil-pressure drop (%)<input type="number" name="oilPressureDropPct" min="5" max="90" step="1"></label>
-      <label>Engine-failure RPM remaining (%)<input type="number" name="engineFailureDropPct" min="5" max="80" step="1"></label>
-      <label>Engine-failure minimum throttle (%)<input type="number" name="engineFailureThrottlePct" min="0" max="110" step="1"></label>
+    </section>
+
+
+    <section class="settings-card control-settings-card">
+      <div class="settings-card-heading">
+        <div><h2>Tablet TGP / A-G controls</h2><p>Turns the map tablet into a temporary one-key-at-a-time targeting control panel. Windows host only.</p></div>
+        <span class="audio-status-pill" id="controlInputStatus">CHECKING</span>
+      </div>
+      <label class="inline-toggle"><input type="checkbox" data-control-setting="enabled"> Enable tablet virtual controls</label>
+      <div class="audio-pair">
+        <label>Panel position
+          <select data-control-setting="panelPosition">
+            <option value="right">Right side</option>
+            <option value="left">Left side</option>
+            <option value="bottom">Bottom</option>
+          </select>
+        </label>
+        <label>Auto-hide after seconds (0 = off)<input type="number" data-control-setting="autoHideSeconds" min="0" max="120" step="5"></label>
+      </div>
+      <p class="settings-help">Defaults use Ctrl+Alt+1 through Ctrl+Alt+0 because War Thunder may not capture CTRL+ALT+1–CTRL+ALT+0 reliably. Open a War Thunder binding, then tap the matching tablet button.</p>
+      <div class="control-binding-grid">
+        <label>TGP view<input type="text" data-control-key="tgp_view" maxlength="12" autocomplete="off"></label>
+        <label>Sight stabilisation<input type="text" data-control-key="stabilize" maxlength="12" autocomplete="off"></label>
+        <label>A/G weapon lock<input type="text" data-control-key="ag_lock" maxlength="12" autocomplete="off"></label>
+        <label>Laser designator<input type="text" data-control-key="laser" maxlength="12" autocomplete="off"></label>
+        <label>Set target / SPI<input type="text" data-control-key="set_target" maxlength="12" autocomplete="off"></label>
+        <label>Clear target / SPI<input type="text" data-control-key="clear_target" maxlength="12" autocomplete="off"></label>
+        <label>Next secondary weapon<input type="text" data-control-key="next_weapon" maxlength="12" autocomplete="off"></label>
+        <label>Fire secondary<input type="text" data-control-key="fire_secondary" maxlength="12" autocomplete="off"></label>
+        <label>TGP zoom + (hold)<input type="text" data-control-key="zoom_in" maxlength="12" autocomplete="off"></label>
+        <label>TGP zoom − (hold)<input type="text" data-control-key="zoom_out" maxlength="12" autocomplete="off"></label>
+      </div>
+      <p class="settings-help">Supported names include letters, numbers, F1–F24, arrows, Space, Enter, Insert, Delete, Home, End and numpad keys such as NUM1 or NUM+.</p>
     </section>
 
     <section class="settings-card toggle-card">
@@ -80,13 +117,8 @@
       <label><input type="checkbox" name="alertSinkRate"> Dangerous sink rate</label>
       <label><input type="checkbox" name="alertGearOverspeed"> Gear overspeed</label>
       <label><input type="checkbox" name="alertFlapOverspeed"> Flap overspeed</label>
-      <label><input type="checkbox" name="alertEngineMismatch"> Engine mismatch</label>
-      <label><input type="checkbox" name="alertEngineTemperature"> Engine temperature</label>
-      <label><input type="checkbox" name="alertOilPressure"> Oil-pressure loss</label>
-      <label><input type="checkbox" name="alertEngineFailure"> Engine failure</label>
       <label><input type="checkbox" name="alertCheckGear"> Check gear on approach</label>
       <label><input type="checkbox" name="alertCheckFlaps"> Check flaps on approach</label>
-      <label><input type="checkbox" name="alertCheckAfterburner"> Check afterburner at Bingo</label>
       <label><input type="checkbox" name="alertPositiveRate"> Positive rate after take-off</label>
       <label><input type="checkbox" name="alertDontSink"> Don't sink after take-off</label>
       <label><input type="checkbox" name="alertHardLanding"> Hard-landing detection</label>
@@ -105,13 +137,22 @@
       <label class="inline-toggle"><input type="checkbox" data-audio="enabled"> Enable host voice alerts</label>
       <label class="inline-toggle"><input type="checkbox" data-audio="preferCustomWav"> Prefer custom WAV clips</label>
       <label>Host TTS voice<select data-audio="voice" id="audioVoice"><option value="">System default</option></select></label>
+      <div class="carrier-audio-settings">
+        <label class="inline-toggle"><input type="checkbox" data-audio="lsoEnabled"> Enable synthetic carrier LSO callouts</label>
+        <label>LSO TTS voice<select data-audio="lsoVoice" id="lsoVoice"><option value="">Use Betty/system voice</option></select></label>
+        <div class="audio-pair">
+          <label>LSO voice rate<input type="number" data-audio="lsoRate" min="-10" max="10" step="1"></label>
+          <label>LSO volume (%)<input type="number" data-audio="lsoVolume" min="0" max="100" step="5"></label>
+        </div>
+      </div>
       <div class="audio-pair">
         <label>Voice rate<input type="number" data-audio="rate" min="-10" max="10" step="1"></label>
         <label>Host audio volume (%)<input type="number" data-audio="volume" min="0" max="100" step="5"></label>
       </div>
       <label>Persistent-warning repeat delay (seconds)<input type="number" data-audio="repeatCooldownSeconds" min="1" max="120" step="0.1"></label>
       <label>Minimum gap between queued cues (seconds)<input type="number" data-audio="minimumGapSeconds" min="1" max="30" step="0.1"></label>
-      <label class="inline-toggle"><input type="checkbox" data-audio="suppressWhenStationary"> Mute and clear cues when stationary</label>
+      <label class="inline-toggle"><input type="checkbox" data-audio="suppressWhenStationary"> Suppress automatic Betty/control cues at low speed</label>
+      <label>Low-speed Betty inhibit threshold (km/h)<input type="number" data-audio="stationarySpeedKmh" min="0" max="300" step="5"></label>
       <label class="inline-toggle"><input type="checkbox" data-audio="announceControlChanges"> Announce gear, flap and airbrake changes</label>
       <div class="audio-test-row">
         <button class="quiet-button" type="button" id="testAudio">Test host voice</button>
@@ -135,13 +176,8 @@
               <option value="gear-speed">Gear overspeed</option>
               <option value="flap-speed">Flap overspeed</option>
               <option value="overspeed">Aircraft overspeed</option>
-              <option value="engine-temperature">Engine temperature</option>
-              <option value="oil-pressure">Oil pressure</option>
-              <option value="engine-failure">Engine failure</option>
-              <option value="engine-mismatch">Engine warning</option>
               <option value="check-gear">Check gear</option>
               <option value="check-flaps">Check flaps</option>
-              <option value="check-afterburner">Check afterburner</option>
               <option value="energy-low">Energy low</option>
               <option value="speedbrake">Speedbrake</option>
               <option value="telemetry-stale">Telemetry lost</option>
@@ -194,13 +230,24 @@
       <label class="inline-toggle"><input type="checkbox" data-audio="radioChatterContextAware"> Prefer internal-crew clips matching the current flight phase</label>
       <label class="inline-toggle"><input type="checkbox" data-audio="radioChatterOnlyAirborne"> Suppress chatter while on the ground</label>
       <label class="inline-toggle"><input type="checkbox" data-audio="radioChatterMixWithWarnings"> Keep chatter playing underneath Betty warnings</label>
+      <label class="inline-toggle"><input type="checkbox" data-audio="radioChatterCockpitFx"> Apply cockpit-radio processing (mono, band-limited, clearer over engines)</label>
       <p class="settings-help">This build includes 2,269 VAICOM clips. Navy and NATO are recommended first; Afghanistan contains real-world combat communications.</p>
+      <label>Radio traffic density
+        <select data-audio="radioChatterTrafficDensity">
+          <option value="busy">Busy operational net</option>
+          <option value="normal">Normal</option>
+          <option value="light">Light traffic</option>
+          <option value="custom">Custom interval</option>
+        </select>
+      </label>
+      <p class="settings-help">Busy mode intentionally uses short clusters of transmissions with occasional longer lulls instead of a fixed repeating interval.</p>
       <div class="audio-pair">
-        <label>Minimum interval (seconds)<input type="number" data-audio="radioChatterMinSeconds" min="5" max="900" step="1"></label>
-        <label>Maximum interval (seconds)<input type="number" data-audio="radioChatterMaxSeconds" min="5" max="1800" step="1"></label>
+        <label>Custom minimum interval (seconds)<input type="number" data-audio="radioChatterMinSeconds" min="2" max="900" step="1"></label>
+        <label>Custom maximum interval (seconds)<input type="number" data-audio="radioChatterMaxSeconds" min="2" max="1800" step="1"></label>
       </div>
       <div class="audio-pair">
         <label>Radio chatter volume (%)<input type="number" data-audio="radioChatterVolume" min="0" max="100" step="5"></label>
+        <label>Radio gain boost (dB)<input type="number" data-audio="radioChatterGainDb" min="0" max="24" step="1"></label>
         <label>Minimum IAS for chatter (km/h)<input type="number" data-audio="radioChatterMinimumIasKmh" min="0" max="1000" step="10"></label>
       </div>
       <label>Post-warning silence when overlap is disabled (seconds)<input type="number" data-audio="radioChatterQuietAfterWarningSeconds" min="0" max="120" step="0.5"></label>
@@ -212,6 +259,39 @@
         <summary>Radio chatter sources and importer</summary>
         <p>Internal RIO/WSO clips remain in <code>audio\radio\generic</code>, <code>takeoff</code>, <code>cruise</code>, <code>combat</code>, <code>landing</code>, or <code>ground</code>. VAICOM recordings are imported into <code>audio\radio\vaicom\THEME</code> by running <code>import_vaicom_chatter.bat</code> on Windows or <code>./import_vaicom_chatter.sh</code> on Linux. VAICOM audio is treated as external radio traffic, not as direct crew dialogue. Chatter and Betty use independent playback channels, so warnings can play over an existing transmission. Disable the overlap option only if you prefer the older interruption behaviour.</p>
       </details>
+    </section>
+
+
+    <section class="settings-card control-settings-card">
+      <div class="settings-card-heading">
+        <div><h2>Tablet TGP / A-G controls</h2><p>Turns the map tablet into a temporary one-key-at-a-time targeting control panel. Windows host only.</p></div>
+        <span class="audio-status-pill" id="controlInputStatus">CHECKING</span>
+      </div>
+      <label class="inline-toggle"><input type="checkbox" data-control-setting="enabled"> Enable tablet virtual controls</label>
+      <div class="audio-pair">
+        <label>Panel position
+          <select data-control-setting="panelPosition">
+            <option value="right">Right side</option>
+            <option value="left">Left side</option>
+            <option value="bottom">Bottom</option>
+          </select>
+        </label>
+        <label>Auto-hide after seconds (0 = off)<input type="number" data-control-setting="autoHideSeconds" min="0" max="120" step="5"></label>
+      </div>
+      <p class="settings-help">Defaults use Ctrl+Alt+1 through Ctrl+Alt+0 because War Thunder may not capture CTRL+ALT+1–CTRL+ALT+0 reliably. Open a War Thunder binding, then tap the matching tablet button.</p>
+      <div class="control-binding-grid">
+        <label>TGP view<input type="text" data-control-key="tgp_view" maxlength="12" autocomplete="off"></label>
+        <label>Sight stabilisation<input type="text" data-control-key="stabilize" maxlength="12" autocomplete="off"></label>
+        <label>A/G weapon lock<input type="text" data-control-key="ag_lock" maxlength="12" autocomplete="off"></label>
+        <label>Laser designator<input type="text" data-control-key="laser" maxlength="12" autocomplete="off"></label>
+        <label>Set target / SPI<input type="text" data-control-key="set_target" maxlength="12" autocomplete="off"></label>
+        <label>Clear target / SPI<input type="text" data-control-key="clear_target" maxlength="12" autocomplete="off"></label>
+        <label>Next secondary weapon<input type="text" data-control-key="next_weapon" maxlength="12" autocomplete="off"></label>
+        <label>Fire secondary<input type="text" data-control-key="fire_secondary" maxlength="12" autocomplete="off"></label>
+        <label>TGP zoom + (hold)<input type="text" data-control-key="zoom_in" maxlength="12" autocomplete="off"></label>
+        <label>TGP zoom − (hold)<input type="text" data-control-key="zoom_out" maxlength="12" autocomplete="off"></label>
+      </div>
+      <p class="settings-help">Supported names include letters, numbers, F1–F24, arrows, Space, Enter, Insert, Delete, Home, End and numpad keys such as NUM1 or NUM+.</p>
     </section>
 
     <section class="settings-card toggle-card">
@@ -229,6 +309,6 @@
     </section>
   </form>
 </main>
-<script src="/static/js/settings.js?v=0.11.0" defer></script>
+<script src="/static/js/settings.js?v=0.13.4" defer></script>
 </body>
 </html>

@@ -1,9 +1,160 @@
-# ThunderScope v0.11.0
+# ThunderScope v0.13.4
 
 ThunderScope is a local War Thunder telemetry, tactical-map, host-audio and
 flight-analysis dashboard. It reads the game's port `8111` and provides a
 heading-up tablet map plus a separate secondary-monitor data display.
 
+
+
+
+
+
+
+
+## v0.13.4 — quieter engine logic + transient flap notices
+
+- Automatic engine-related Betty/tablet cues are retired: engine temperature, oil pressure, engine failure, engine mismatch, and check-afterburner.
+- Tablet flap configuration notices now use a timed toast and clear automatically after 2.6 seconds.
+- The underlying historical WAV assets remain packaged for attribution/history but are no longer active alerts.
+
+## v0.13.3 — fuel-range ring repair
+
+- Fixes the RNG ring radius conversion: physical metres are now converted into map-image pixels before drawing.
+- Replaces noisy adjacent-sample fuel burn with a rolling 8–30 second estimator, making quantised fuel telemetry usable.
+- Adds an always-visible RNG readout while enabled (`CAL` while learning, then estimated kilometres and endurance).
+- Shows `> VIEW` when the true estimated range circumference lies beyond the current tablet viewport.
+- Retains the 5 km heading-vector distance marks from v0.13.2.
+
+## v0.13.1 — tablet TGP / A-G virtual control panel
+
+- Added a touch-friendly **TGP** drawer directly on the tactical map. It opens on demand and leaves the rest of the map visible.
+- Added one-to-one Windows keyboard injection using only the Python standard library; no process injection, game-memory access or multi-step macros.
+- Default bindings are `CTRL+ALT+1` through `CTRL+ALT+0`, providing ten otherwise-unused combinations without consuming more reachable HOTAS/keyboard buttons. v0.13.1 uses Windows scan-code `SendInput`.
+- Initial controls: TGP view, sight stabilisation, A/G weapon lock, laser designator, set/clear target point, next secondary weapon, fire secondary weapon, and hold-to-use TGP zoom +/- controls.
+- TGP drawer can open on the right, left or bottom and auto-hides after 20 seconds of inactivity by default. Any panel interaction resets the timer.
+- Opening TGP mode closes the Route Planner and temporarily suppresses the carrier HUD so the tablet is not buried under overlays.
+- Added a release-all failsafe on browser focus loss, visibility changes, server shutdown and an explicit API endpoint to prevent held zoom controls becoming stuck.
+- Added Settings configuration for panel position, auto-hide and every virtual-key binding.
+- Windows-only for v0.13.1. Linux telemetry/audio remain supported; the virtual aircraft-control bridge reports unavailable on non-Windows hosts.
+
+### v0.13.1 input compatibility note
+
+v0.13.0 used F13–F22 with the legacy Windows `keybd_event` API. v0.13.1 switches to Ctrl+Alt+number chords and scan-code `SendInput`. If War Thunder still captures nothing, temporarily map TGP VIEW to `K` and test it in Notepad; a typed `k` proves the Windows bridge works and isolates the issue to game-side input capture.
+
+## v0.12.6 — heading vector + true player-centred map
+
+- Added a **VEC** map control that draws a solid magenta heading vector from the nose of the player aircraft to the edge of the display.
+- The vector follows the aircraft correctly in both heading-up and north-up modes.
+- Removed map-edge camera clamping in normal follow mode. The player aircraft now stays centred even at the extreme edge of the War Thunder tactical map; empty space may appear beyond the source map boundary rather than pushing the aircraft off-centre.
+- Existing zoom, pinch zoom, pan, reset/recentre, HDG/N modes, route planning, carrier aid and symbology are retained.
+
+## v0.12.5 — map symbology + busy radio net
+
+- Route Planner and Carrier Landing Assistant now start closed instead of occupying the map.
+- `NAV` toggles the route planner, `LSO` arms/hides the carrier approach HUD, and `HIDE` dismisses both large overlays.
+- Hidden overlays use `display:none` plus disabled pointer interaction, so they cannot block map taps.
+- Carrier setup is collapsed by default, and the LSO HUD only renders on the inbound side of the deck.
+- Route markers remain directly removable by tapping them when no placement mode is active.
+- VAICOM chatter is decoupled from the 70 km/h Betty inhibit and can play while parked/taxiing/on a carrier.
+- Ground/deck chatter is enabled by default; the existing Settings switch can restore airborne-only chatter.
+- Betty remains inhibited at or below 70 km/h and intentional engine-off states remain protected from false engine-failure warnings.
+
+## v0.12.3 — tablet route-planner usability
+
+- Fixed the route planner close button: hidden panels now leave the layout/hit-test tree instead of remaining invisibly over the map.
+- Added a large **HIDE** button beside **NAV** for damaged/small touchscreens.
+- Tap an existing route marker on the map (with no placement mode active) to remove it via a large confirmation dialog.
+- Carrier approach HUD/callouts stay suppressed while IAS is 70 km/h or below, so setup clutter does not activate while parked on a carrier deck.
+
+## v0.12.2 — simple LAN access + carrier-deck Betty inhibit
+
+- LAN mode is back to simple trusted-local-network access. `run_lan` binds to
+  `0.0.0.0:8765`; there are no query tokens, cookies, token files or API/WebSocket
+  authentication steps.
+- Automatic Betty warnings and gear/flap/airbrake callouts are suppressed at or
+  below **70 km/h** by default. This prevents a parked aircraft on a moving carrier
+  from generating airborne warnings. Manual Settings audio previews still play.
+- The low-speed threshold is visible in Settings and remains adjustable per install.
+- Engine-failure detection now requires a real RPM collapse from a previously
+  running engine. An engine that is already shut down no longer triggers the cue.
+- All v0.12.1 stale-alert, repository-hygiene and frontend escaping fixes remain.
+
+For LAN use, open `http://HOST-LAN-IP:8765/map` directly. Only use LAN mode on a
+network you trust.
+
+## v0.12.1 — repository and alert-queue hardening
+
+This maintenance release keeps all v0.12.0 carrier and v0.11.0 navigation
+features while tightening the project around real-world use and GitHub publishing.
+The short-lived LAN token experiment from that release was removed again in v0.12.2.
+
+- Generated settings, routes and databases are ignored by Git. A clean
+  `data/settings.example.json` remains as a reference template.
+- The 2,269-file VAICOM library is ignored in source repositories but retained in the
+  full release ZIP. The importer scripts remain for source/lite installations.
+- Condition-bound audio alerts are checked again immediately before playback. A queued
+  gear, flap, stall, G, fuel or engine warning is discarded if the condition has already
+  cleared.
+- Server-originated vehicle, profile, route, voice and theme names are HTML-escaped
+  before use in template-generated interface elements.
+- Dense telemetry-loop code has been expanded and type-annotated to make future diffs
+  and merges easier to review.
+
+For normal home use, v0.12.2 restores direct trusted-LAN access with no token.
+
+## v0.12.0 — synthetic carrier landing aid
+
+The tablet map can now be configured as a generic carrier-approach trainer. Open
+**NAV**, expand **Carrier landing aid**, press **Mark stern + bow**, then tap the
+stern and bow ends of the landing deck. The marked direction is the landing
+direction. Enter the approximate deck altitude and load or tune the aircraft
+approach profile before commencing the approach.
+
+Carrier features:
+
+- Draws the deck, touchdown reference and extended final-approach line.
+- Activates a dedicated synthetic-LSO display inside the configured approach range.
+- Calculates deck heading, distance to touchdown, line-up error and glidepath error.
+- Shows IAS, AoA, bank, sink rate, gear and flap state alongside a moving guidance ball.
+- Provides measured-condition LSO callouts for glidepath, line-up, speed, AoA, bank,
+  sink rate, configuration, distance milestones and wave-off.
+- Uses separate LSO voice, rate and volume settings while retaining normal Betty and
+  VAICOM playback behaviour.
+- Supports aircraft-specific approach IAS, target AoA, AoA tolerance, maximum final
+  bank, maximum sink rate and glidepath angle.
+- Applies conservative wave-off logic close to the deck.
+- Grades completed passes using touchdown line-up, glide error, sink rate, IAS, AoA,
+  bank and configuration.
+- Labels outcomes as **Likely arrested**, **Bolter**, **Deck crossing** or **Wave-off**
+  because port 8111 does not expose a reliable arresting-wire/hook engagement flag.
+
+### Carrier setup
+
+1. Enter a test flight or match and open `/map` on the tablet.
+2. Press **NAV** and expand **Carrier landing aid**.
+3. Press **Mark stern + bow**.
+4. Tap the stern end of the angled landing area, followed by its bow end.
+5. Enter the approximate carrier-deck altitude above the map datum.
+6. Press **Load aircraft profile**, then adjust approach IAS/AoA limits as required.
+7. Leave spoken callouts, conservative wave-off and pass grading enabled.
+8. Close the planner and fly onto the dashed final line. The carrier HUD appears
+   automatically inside the selected activation distance.
+
+The map's previous heading-up/north-up, zoom, pan, pinch, recenter, fullscreen,
+route-planning, target, home-airfield and ETA controls are unchanged.
+
+### Carrier limitations
+
+- The first implementation uses manually marked, fixed deck points. On a moving
+  carrier, mark the deck again if its map position has shifted materially.
+- Deck altitude is entered manually; incorrect altitude produces incorrect vertical
+  guidance.
+- The guidance is a synthetic training aid, not a simulation of a specific aircraft's
+  optical landing system or shipboard equipment.
+- Successful arrest, bolter and touchdown are inferred from position, altitude,
+  vertical motion and ground-speed changes. They cannot be treated as authoritative.
+- Aircraft approach values vary greatly. Generic defaults are deliberately broad;
+  tune or save a profile for each aircraft used regularly.
 
 ## v0.11.0 — mission navigation and route planning
 
@@ -167,11 +318,13 @@ http://127.0.0.1:8765/data
 http://127.0.0.1:8765/settings
 ```
 
-Open the tablet map using the host's LAN address:
+`run_lan.sh` prints the tablet-map URL, for example:
 
 ```text
 http://HOST-LAN-IP:8765/map
 ```
+
+Open that address directly on the tablet while both devices are on the same trusted LAN.
 
 With UFW enabled, allow the dashboard from the local network, for example:
 
@@ -190,7 +343,7 @@ Windows uses SAPI for fallback TTS and native WAV playback.
 
 ## VAICOM chatter
 
-The complete chatter library is now bundled under:
+The **full release ZIP** bundles the complete chatter library under:
 
 ```text
 audio/radio/vaicom/
@@ -204,8 +357,9 @@ The Afghanistan theme contains real-world combat communications and may be
 confronting. It is included because it was present in the user-supplied archive,
 but it is never selected automatically.
 
-The import scripts remain available for refreshing or replacing themes from a
-newer local VAICOM repository or ZIP later.
+The smaller source/lite release excludes those 2,269 files to keep Git clones
+manageable. Its importer scripts can install chatter from a local VAICOM ZIP or
+folder. The same scripts remain useful for refreshing a full installation later.
 
 ## Running away from the game PC
 
@@ -230,7 +384,7 @@ This requires the game PC to permit LAN access to port 8111.
 
 ## Upgrade
 
-Extract v0.11.0 over the existing folder while retaining:
+Extract v0.12.2 over the existing folder while retaining:
 
 ```text
 data/settings.json

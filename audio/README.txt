@@ -2,7 +2,7 @@ ThunderScope custom Betty WAV overrides
 =======================================
 
 ThunderScope uses a matching WAV whenever "Prefer custom WAV clips" is enabled.
-All active cue IDs in v0.10.1 have a bundled PCM WAV override:
+All active cue IDs in v0.12.2 have a bundled PCM WAV override:
 
 Fuel
   fuel-critical.wav       Warning. Low fuel.
@@ -59,7 +59,7 @@ See audio/radio/README.txt for the category layout and playback rules.
 
 Source attribution
 ==================
-All active v0.10.1 Betty recordings were supplied by the project user.
+All active Betty recordings were supplied by the project user.
 See USER_BETTY_PACK_NOTICE.txt.
 
 The earlier Steve-787 F/A-18 pack remains preserved only in the inactive

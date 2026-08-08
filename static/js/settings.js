@@ -1,7 +1,10 @@
-const $=id=>document.getElementById(id);let settings=null,currentVehicle=null,audioInfo=null;
-const fieldNames=['fuelReservePct','fuelCriticalPct','jokerFuelPct','landingIasMin','landingIasMax','sinkRateWarning','sinkRateMaxIas','highAoADeg','stallAoADeg','gCaution','highG','lowG','gearOverspeedKmh','flapOverspeedKmh','engineMismatchPct','overspeedKmh','approachCheckMaxIas','positiveRateMps','dontSinkMps','hardLandingMps','energyLowIasKmh','energyLowDecelKmhS','speedbrakeThrottlePct','engineOilTempWarningC','engineWaterTempWarningC','engineHeadTempWarningC','oilPressureDropPct','engineFailureDropPct','engineFailureThrottlePct'];
-const toggles=['alertsEnabled','alertLowFuel','alertJokerFuel','alertGCaution','alertHighG','alertHighAoA','alertStall','alertMachOne','alertSinkRate','alertGearOverspeed','alertFlapOverspeed','alertEngineMismatch','alertEngineTemperature','alertOilPressure','alertEngineFailure','alertCheckGear','alertCheckFlaps','alertCheckAfterburner','alertPositiveRate','alertDontSink','alertHardLanding','alertSpeedbrake','alertOverspeed','alertEnergyLow','alertTelemetryStale','alertTelemetryRestored'];
-const audioDefaults={enabled:true,preferCustomWav:true,voice:'',rate:-1,volume:90,repeatCooldownSeconds:12,minimumGapSeconds:1,suppressWhenStationary:true,stationarySpeedKmh:.5,announceControlChanges:true,radioChatterEnabled:false,radioChatterSource:'vaicom',radioChatterVaicomTheme:'Navy',radioChatterContextAware:true,radioChatterOnlyAirborne:true,radioChatterMinSeconds:45,radioChatterMaxSeconds:120,radioChatterQuietAfterWarningSeconds:10,radioChatterMinimumIasKmh:80,radioChatterMixWithWarnings:true,radioChatterVolume:50};
+const $=id=>document.getElementById(id);
+const escapeHtml=value=>String(value??'').replace(/[&<>'\"]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','\"':'&quot;'}[char]));
+let settings=null,currentVehicle=null,audioInfo=null;
+const fieldNames=['fuelReservePct','fuelCriticalPct','jokerFuelPct','landingIasMin','landingIasMax','carrierApproachIasMin','carrierApproachIasMax','carrierTargetAoADeg','carrierAoAToleranceDeg','carrierMaxBankDeg','carrierMaxSinkMps','carrierGlidepathDeg','sinkRateWarning','sinkRateMaxIas','highAoADeg','stallAoADeg','gCaution','highG','lowG','gearOverspeedKmh','flapOverspeedKmh','overspeedKmh','approachCheckMaxIas','positiveRateMps','dontSinkMps','hardLandingMps','energyLowIasKmh','energyLowDecelKmhS','speedbrakeThrottlePct','engineFailureThrottlePct'];
+const toggles=['alertsEnabled','alertLowFuel','alertJokerFuel','alertGCaution','alertHighG','alertHighAoA','alertStall','alertMachOne','alertSinkRate','alertGearOverspeed','alertFlapOverspeed','alertCheckGear','alertCheckFlaps','alertPositiveRate','alertDontSink','alertHardLanding','alertSpeedbrake','alertOverspeed','alertEnergyLow','alertTelemetryStale','alertTelemetryRestored'];
+const audioDefaults={enabled:true,preferCustomWav:true,voice:'',rate:-1,volume:90,repeatCooldownSeconds:12,minimumGapSeconds:1,suppressWhenStationary:true,stationarySpeedKmh:70,announceControlChanges:true,radioChatterEnabled:false,radioChatterSource:'vaicom',radioChatterVaicomTheme:'Navy',radioChatterContextAware:true,radioChatterOnlyAirborne:false,radioChatterTrafficDensity:'busy',radioChatterMinSeconds:6,radioChatterMaxSeconds:18,radioChatterQuietAfterWarningSeconds:10,radioChatterMinimumIasKmh:80,radioChatterMixWithWarnings:true,radioChatterVolume:70,radioChatterGainDb:10,radioChatterCockpitFx:true,lsoEnabled:true,lsoVoice:'',lsoRate:-1,lsoVolume:92};
+const controlDefaults={enabled:true,panelPosition:'right',autoHideSeconds:20,actions:{tgp_view:{label:'TGP VIEW',key:'CTRL+ALT+1',mode:'tap'},stabilize:{label:'STAB',key:'CTRL+ALT+2',mode:'tap'},ag_lock:{label:'A/G LOCK',key:'CTRL+ALT+3',mode:'tap'},laser:{label:'LASER',key:'CTRL+ALT+4',mode:'tap'},set_target:{label:'SET SPI',key:'CTRL+ALT+5',mode:'tap'},clear_target:{label:'CLR SPI',key:'CTRL+ALT+6',mode:'tap'},next_weapon:{label:'NEXT WPN',key:'CTRL+ALT+7',mode:'tap'},fire_secondary:{label:'FIRE',key:'CTRL+ALT+8',mode:'tap'},zoom_in:{label:'ZOOM +',key:'CTRL+ALT+9',mode:'hold'},zoom_out:{label:'ZOOM −',key:'CTRL+ALT+0',mode:'hold'}}};
 function selectedObject(){const key=$('profileSelect').value;return key==='__default__'?settings.defaults:(settings.profiles[key]??={});}
 function populate(){
   const source={...settings.defaults,...selectedObject()};
@@ -10,9 +13,12 @@ function populate(){
   document.querySelectorAll('[data-display]').forEach(el=>{const key=el.dataset.display;if(el.type==='checkbox')el.checked=settings.display[key]!==false;else el.value=settings.display[key]??'';});
   settings.audio={...audioDefaults,...(settings.audio||{})};
   document.querySelectorAll('[data-audio]').forEach(el=>{const key=el.dataset.audio;if(el.type==='checkbox')el.checked=settings.audio[key]!==false;else el.value=settings.audio[key]??'';});
+  settings.controls={...controlDefaults,...(settings.controls||{}),actions:{...controlDefaults.actions,...((settings.controls||{}).actions||{})}};
+  document.querySelectorAll('[data-control-setting]').forEach(el=>{const key=el.dataset.controlSetting;if(el.type==='checkbox')el.checked=settings.controls[key]!==false;else el.value=settings.controls[key]??'';});
+  document.querySelectorAll('[data-control-key]').forEach(el=>{const action=el.dataset.controlKey;el.value=settings.controls.actions?.[action]?.key||'';});
   $('deleteProfile').disabled=$('profileSelect').value==='__default__';
 }
-function rebuildProfiles(){const select=$('profileSelect'),chosen=select.value;select.innerHTML='<option value="__default__">Default profile</option>'+Object.keys(settings.profiles).map(key=>`<option value="${key}">${key.replaceAll('_',' ')}</option>`).join('');if([...select.options].some(o=>o.value===chosen))select.value=chosen;populate();}
+function rebuildProfiles(){const select=$('profileSelect'),chosen=select.value;select.innerHTML='<option value="__default__">Default profile</option>'+Object.keys(settings.profiles).map(key=>`<option value="${escapeHtml(key)}">${escapeHtml(key.replaceAll('_',' '))}</option>`).join('');if([...select.options].some(o=>o.value===chosen))select.value=chosen;populate();}
 function collect(){
   const target=selectedObject();
   fieldNames.forEach(name=>target[name]=Number(document.querySelector(`[name="${name}"]`).value));
@@ -20,14 +26,21 @@ function collect(){
   document.querySelectorAll('[data-display]').forEach(el=>settings.display[el.dataset.display]=el.type==='checkbox'?el.checked:Number(el.value));
   settings.audio={...audioDefaults,...(settings.audio||{})};
   document.querySelectorAll('[data-audio]').forEach(el=>{const key=el.dataset.audio;settings.audio[key]=el.type==='checkbox'?el.checked:(el.tagName==='SELECT'?el.value:Number(el.value));});
+  settings.controls={...controlDefaults,...(settings.controls||{}),actions:{...controlDefaults.actions,...((settings.controls||{}).actions||{})}};
+  document.querySelectorAll('[data-control-setting]').forEach(el=>{const key=el.dataset.controlSetting;settings.controls[key]=el.type==='checkbox'?el.checked:(el.tagName==='SELECT'?el.value:Number(el.value));});
+  document.querySelectorAll('[data-control-key]').forEach(el=>{const action=el.dataset.controlKey;settings.controls.actions[action]={...controlDefaults.actions[action],...(settings.controls.actions[action]||{}),key:el.value.trim().toUpperCase()};});
 }
 async function save(){collect();const response=await fetch('/api/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(settings)});if(!response.ok)throw new Error('save failed');settings=await response.json();$('saveState').textContent='Saved for monitor, tablet and host audio.';setTimeout(()=>$('saveState').textContent='',2500);}
 async function loadAudioInfo(){
   try{
     audioInfo=await fetch('/api/audio/status',{cache:'no-store'}).then(r=>r.json());
+    const voices=audioInfo.voices||[];
     const select=$('audioVoice'),chosen=settings?.audio?.voice||'';
-    select.innerHTML='<option value="">System default</option>'+(audioInfo.voices||[]).map(name=>`<option value="${name.replaceAll('"','&quot;')}">${name}</option>`).join('');
+    select.innerHTML='<option value="">System default</option>'+voices.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
     select.value=[...select.options].some(o=>o.value===chosen)?chosen:'';
+    const lsoSelect=$('lsoVoice'),lsoChosen=settings?.audio?.lsoVoice||'';
+    lsoSelect.innerHTML='<option value="">Use Betty/system voice</option>'+voices.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('');
+    lsoSelect.value=[...lsoSelect.options].some(o=>o.value===lsoChosen)?lsoChosen:'';
     const audioBackendReady=Boolean(audioInfo.wav_backend||audioInfo.tts_backend);$('audioStatus').textContent=audioInfo.supported?(audioInfo.last_error?'CHECK AUDIO':(audioBackendReady?'HOST READY':'INSTALL AUDIO')):'UNSUPPORTED';
     $('audioStatus').classList.toggle('warning',Boolean(audioInfo.last_error)||!audioInfo.supported||!audioBackendReady);
     if(audioInfo.last_error)$('audioTestState').textContent=audioInfo.last_error;
@@ -36,23 +49,26 @@ async function loadAudioInfo(){
     $('chatterStatus').classList.toggle('warning',!(chatter.total_clips>0));
     const themeSelect=$('vaicomTheme'),selected=settings?.audio?.radioChatterVaicomTheme||'Navy';
     const themeNames=Object.keys(themes);
-    themeSelect.innerHTML=(themeNames.length?themeNames:['Navy']).map(name=>`<option value="${name.replaceAll('"','&quot;')}">${name}${themes[name]?` (${themes[name]})`:''}</option>`).join('');
+    themeSelect.innerHTML=(themeNames.length?themeNames:['Navy']).map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}${themes[name]?` (${Number(themes[name])||0})`:''}</option>`).join('');
     themeSelect.value=[...themeSelect.options].some(option=>option.value===selected)?selected:themeSelect.options[0]?.value||'Navy';
     settings.audio.radioChatterVaicomTheme=themeSelect.value;
     const crewText=Object.entries(counts).filter(([,count])=>count).map(([name,count])=>`${name} ${count}`).join(' · ');
     const vaicomText=Object.entries(themes).filter(([,count])=>count).map(([name,count])=>`${name} ${count}`).join(' · ');
+    const nextChatter=Number(chatter.next_in_seconds);
+    const densityText=chatter.traffic_density?` · ${String(chatter.traffic_density).toUpperCase()}`:'';
+    const nextText=chatter.enabled&&Number.isFinite(nextChatter)?` · Next ~${Math.max(0,Math.round(nextChatter))}s`:'';
     $('chatterTestState').textContent=chatter.total_clips>0
-      ? `Crew ${chatter.crew_total_clips||0}${crewText?` (${crewText})`:''} · VAICOM ${chatter.vaicom_total_clips||0}${vaicomText?` (${vaicomText})`:''}`
+      ? `Crew ${chatter.crew_total_clips||0}${crewText?` (${crewText})`:''} · VAICOM ${chatter.vaicom_total_clips||0}${vaicomText?` (${vaicomText})`:''}${densityText}${nextText}`
       : 'No chatter clips installed. Run the VAICOM importer for your OS or add crew WAV files.';
   }catch{$('audioStatus').textContent='UNAVAILABLE';$('audioStatus').classList.add('warning');}
 }
-async function load(){settings=await fetch('/api/settings',{cache:'no-store'}).then(r=>r.json());settings.audio={...audioDefaults,...(settings.audio||{})};try{const health=await fetch('/api/health',{cache:'no-store'}).then(r=>r.json());currentVehicle=health.vehicle;}catch{}rebuildProfiles();await loadAudioInfo();populate();}
+async function load(){settings=await fetch('/api/settings',{cache:'no-store'}).then(r=>r.json());settings.audio={...audioDefaults,...(settings.audio||{})};settings.controls={...controlDefaults,...(settings.controls||{}),actions:{...controlDefaults.actions,...((settings.controls||{}).actions||{})}};try{const health=await fetch('/api/health',{cache:'no-store'}).then(r=>r.json());currentVehicle=health.vehicle;}catch{}rebuildProfiles();await loadAudioInfo();populate();}
 $('profileSelect').addEventListener('change',populate);
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();save().catch(()=>$('saveState').textContent='Unable to save settings.');});
 $('newProfile').addEventListener('click',()=>{const key=currentVehicle||prompt('Enter the exact aircraft profile name:');if(!key)return;settings.profiles[key]={...settings.defaults};rebuildProfiles();$('profileSelect').value=key;populate();});
 $('deleteProfile').addEventListener('click',()=>{const key=$('profileSelect').value;if(key==='__default__')return;delete settings.profiles[key];$('profileSelect').value='__default__';rebuildProfiles();});
 $('exportSettings').addEventListener('click',()=>{collect();const blob=new Blob([JSON.stringify(settings,null,2)],{type:'application/json'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='thunderscope-settings.json';a.click();URL.revokeObjectURL(a.href);});
-$('importSettings').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{const imported=JSON.parse(await file.text());if(!imported.defaults||!imported.profiles)throw new Error();settings={...imported,audio:{...audioDefaults,...(imported.audio||{})},display:imported.display||{}};rebuildProfiles();await loadAudioInfo();populate();$('saveState').textContent='Imported. Press Save settings to apply.';}catch{$('saveState').textContent='That file is not a valid ThunderScope settings export.';}});
+$('importSettings').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{const imported=JSON.parse(await file.text());if(!imported.defaults||!imported.profiles)throw new Error();settings={...imported,audio:{...audioDefaults,...(imported.audio||{})},controls:{...controlDefaults,...(imported.controls||{}),actions:{...controlDefaults.actions,...((imported.controls||{}).actions||{})}},display:imported.display||{}};rebuildProfiles();await loadAudioInfo();populate();$('saveState').textContent='Imported. Press Save settings to apply.';}catch{$('saveState').textContent='That file is not a valid ThunderScope settings export.';}});
 $('testAudio').addEventListener('click',async()=>{
   collect();
   $('audioTestState').textContent='Saving audio settings…';
@@ -78,7 +94,10 @@ $('testChatter').addEventListener('click',async()=>{
   }catch(error){$('chatterTestState').textContent=error.message||'Unable to queue radio chatter.';}
 });
 
-load().catch(()=>$('saveState').textContent='Unable to load settings.');
+
+async function loadControlStatus(){try{const info=await fetch('/api/controls/status',{cache:'no-store'}).then(r=>r.json());$('controlInputStatus').textContent=info.supported?'WINDOWS READY':'UNAVAILABLE';$('controlInputStatus').classList.toggle('warning',!info.supported);}catch{$('controlInputStatus').textContent='UNAVAILABLE';$('controlInputStatus').classList.add('warning');}}
+
+load().then(loadControlStatus).catch(()=>$('saveState').textContent='Unable to load settings.');
 
 $('testBettyCue').addEventListener('click',async()=>{
   collect();

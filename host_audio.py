@@ -8,6 +8,8 @@ import random
 import re
 import shutil
 import subprocess
+import tempfile
+from array import array
 import time
 import wave
 from pathlib import Path
@@ -31,13 +33,8 @@ ALERT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "gear-speed": {"phrase": "Gear overspeed.", "priority": 0, "repeat": True},
     "flap-speed": {"phrase": "Flap overspeed.", "priority": 0, "repeat": True},
     "overspeed": {"phrase": "Overspeed.", "priority": 0, "repeat": True},
-    "engine-temperature": {"phrase": "Engine temperature.", "priority": 0, "repeat": True},
-    "oil-pressure": {"phrase": "Oil pressure.", "priority": 0, "repeat": True},
-    "engine-failure": {"phrase": "Engine failure.", "priority": 0, "repeat": True},
-    "engine-mismatch": {"phrase": "Engine warning.", "priority": 0, "repeat": True},
     "check-gear": {"phrase": "Check gear.", "priority": 1, "repeat": True},
     "check-flaps": {"phrase": "Check flaps.", "priority": 1, "repeat": True},
-    "check-afterburner": {"phrase": "Check afterburner.", "priority": 1, "repeat": True},
     "energy-low": {"phrase": "Energy low.", "priority": 1, "repeat": True},
     "speedbrake": {"phrase": "Speedbrake.", "priority": 1, "repeat": True},
     "telemetry-stale": {"phrase": "Telemetry lost.", "priority": 1, "repeat": False},
@@ -53,6 +50,26 @@ ALERT_DEFINITIONS: dict[str, dict[str, Any]] = {
     "airbrake-retracted": {"phrase": "Airbrake retracted.", "priority": 2, "repeat": False},
     "mach-one": {"phrase": "Mach one.", "priority": 2, "repeat": False},
     "test": {"phrase": "ThunderScope voice alert test.", "priority": 0, "repeat": False},
+}
+
+
+CONDITION_BOUND_ALERTS = {
+    "fuel-critical",
+    "fuel-reserve",
+    "joker-fuel",
+    "g-limit",
+    "g-caution",
+    "high-aoa",
+    "stall",
+    "sink-rate",
+    "gear-speed",
+    "flap-speed",
+    "overspeed",
+    "check-gear",
+    "check-flaps",
+    "energy-low",
+    "speedbrake",
+    "telemetry-stale",
 }
 
 
@@ -120,7 +137,20 @@ class HostAudioService:
         self.audio_dir.mkdir(exist_ok=True)
         self.script_path = base_dir / "speak.ps1"
         self.daemon_script_path = base_dir / "speak_daemon.ps1"
-        self.queue: asyncio.PriorityQueue[tuple[int, int, str, str, bool]] = asyncio.PriorityQueue()
+        self.queue: asyncio.PriorityQueue[
+            tuple[
+                int,
+                int,
+                str,
+                str,
+                bool,
+                str | None,
+                int | None,
+                int | None,
+                bool,
+                float,
+            ]
+        ] = asyncio.PriorityQueue()
         self.task: asyncio.Task[Any] | None = None
         self.chatter_task: asyncio.Task[Any] | None = None
         self.chatter_playback_task: asyncio.Task[Any] | None = None
@@ -148,6 +178,7 @@ class HostAudioService:
         self._last_chatter: dict[str, Any] | None = None
         self._recent_chatter: list[str] = []
         self._next_chatter_at: float | None = None
+        self._last_chatter_enabled = False
         self._urgent_pending = asyncio.Event()
         self._chatter_playing = False
         self._was_connected = False
@@ -166,6 +197,9 @@ class HostAudioService:
         self._touchdown_candidate: tuple[float, float, float | None, float] | None = None
         self._oil_pressure_baselines: dict[str, float] = {}
         self._rpm_baselines: dict[str, float] = {}
+        self._previous_rpms: dict[str, float] = {}
+        self._failed_engines: set[str] = set()
+        self._dropped_stale_alerts = 0
 
     @property
     def windows_host(self) -> bool:
@@ -220,15 +254,16 @@ class HostAudioService:
             "repeatCooldownSeconds": 12.0,
             "minimumGapSeconds": 1.0,
             "suppressWhenStationary": True,
-            "stationarySpeedKmh": 0.5,
+            "stationarySpeedKmh": 70.0,
             "announceControlChanges": True,
             "radioChatterEnabled": False,
             "radioChatterSource": "vaicom",
             "radioChatterVaicomTheme": "Navy",
             "radioChatterContextAware": True,
-            "radioChatterOnlyAirborne": True,
-            "radioChatterMinSeconds": 45.0,
-            "radioChatterMaxSeconds": 120.0,
+            "radioChatterOnlyAirborne": False,
+            "radioChatterTrafficDensity": "busy",
+            "radioChatterMinSeconds": 6.0,
+            "radioChatterMaxSeconds": 18.0,
             "radioChatterQuietAfterWarningSeconds": 10.0,
             "radioChatterMinimumIasKmh": 80.0,
             "radioChatterMixWithWarnings": True,
@@ -241,6 +276,12 @@ class HostAudioService:
         self._settings = settings
         self._last_snapshot = snapshot
         audio = self._audio_settings()
+        chatter_enabled = bool(audio.get("radioChatterEnabled", False))
+        if chatter_enabled and not self._last_chatter_enabled:
+            # Make newly enabled radio chatter audibly confirm itself soon, then
+            # return to the configured natural random interval.
+            self._next_chatter_at = time.monotonic() + random.uniform(1.5, 4.0)
+        self._last_chatter_enabled = chatter_enabled
         now = float(snapshot.get("timestamp") or time.time())
         connected = bool(snapshot.get("connected"))
         previous_connected = self._was_connected
@@ -305,21 +346,31 @@ class HostAudioService:
                 self._stale_announced = True
 
         cooldown = max(1.0, float(audio.get("repeatCooldownSeconds", 12.0)))
+        previous_conditions = self._active_conditions
+        self._active_conditions = current
         for key in current:
             definition = ALERT_DEFINITIONS[key]
-            newly_active = key not in self._active_conditions
-            due_repeat = bool(definition["repeat"]) and now - self._last_announced.get(key, 0.0) >= cooldown
+            newly_active = key not in previous_conditions
+            due_repeat = (
+                bool(definition["repeat"])
+                and now - self._last_announced.get(key, 0.0) >= cooldown
+            )
             if newly_active or due_repeat:
-                self.enqueue(key, str(definition["phrase"]), int(definition["priority"]))
+                self.enqueue(
+                    key,
+                    str(definition["phrase"]),
+                    int(definition["priority"]),
+                )
                 self._last_announced[key] = now
 
-        self._active_conditions = current
         self._was_connected = connected
 
     def _reset_aircraft_tracking(self, vehicle: str | None) -> None:
         self._last_vehicle = vehicle
         self._oil_pressure_baselines.clear()
         self._rpm_baselines.clear()
+        self._previous_rpms.clear()
+        self._failed_engines.clear()
         self._last_motion_time = None
         self._last_motion_ias = None
         self._last_altitude = None
@@ -586,9 +637,6 @@ class HostAudioService:
             current.add("check-gear")
         if profile.get("alertCheckFlaps", True) and descending_approach and gear_down and not flaps_down:
             current.add("check-flaps")
-        if profile.get("alertCheckAfterburner", True) and afterburner and fuel_pct is not None:
-            if fuel_pct <= float(profile.get("fuelReservePct", 25)):
-                current.add("check-afterburner")
         if profile.get("alertSpeedbrake", True) and airbrake_state == "extended" and throttle is not None:
             if throttle >= float(profile.get("speedbrakeThrottlePct", 80)):
                 current.add("speedbrake")
@@ -601,48 +649,14 @@ class HostAudioService:
             ):
                 current.add("energy-low")
 
-        temperatures = self._temperature_values(snapshot)
-        if profile.get("alertEngineTemperature", True):
-            too_hot = (
-                any(value >= float(profile.get("engineOilTempWarningC", 120)) for value in temperatures["oil"])
-                or any(value >= float(profile.get("engineWaterTempWarningC", 120)) for value in temperatures["water"])
-                or any(value >= float(profile.get("engineHeadTempWarningC", 260)) for value in temperatures["head"])
-            )
-            if too_hot:
-                current.add("engine-temperature")
-
+        # Engine-related Betty cues were retired in v0.13.4. Keep the internal
+        # RPM history refreshed so aircraft/profile changes remain well behaved if
+        # the diagnostics code inspects these channels, but do not generate alerts.
         rpms = self._engine_rpms(snapshot)
         for key, value in rpms.items():
             self._rpm_baselines[key] = max(value, self._rpm_baselines.get(key, 0.0))
-        engine_failure = False
-        if profile.get("alertEngineFailure", True) and throttle is not None and throttle >= float(profile.get("engineFailureThrottlePct", 55)):
-            drop_fraction = max(0.05, min(0.8, float(profile.get("engineFailureDropPct", 20)) / 100.0))
-            for key, value in rpms.items():
-                baseline = self._rpm_baselines.get(key, 0.0)
-                if baseline >= 20 and value <= baseline * drop_fraction:
-                    engine_failure = True
-                    current.add("engine-failure")
-                    break
+        self._previous_rpms.update(rpms)
 
-        pressures = self._oil_pressures(snapshot)
-        for key, value in pressures.items():
-            self._oil_pressure_baselines[key] = max(value, self._oil_pressure_baselines.get(key, 0.0))
-        if profile.get("alertOilPressure", True) and rpms:
-            drop_fraction = max(0.05, min(0.9, float(profile.get("oilPressureDropPct", 35)) / 100.0))
-            engine_running = any(value >= self._rpm_baselines.get(key, value) * 0.35 for key, value in rpms.items())
-            if engine_running:
-                for key, value in pressures.items():
-                    baseline = self._oil_pressure_baselines.get(key, 0.0)
-                    if baseline > 0.2 and value <= baseline * drop_fraction:
-                        current.add("oil-pressure")
-                        break
-
-        if not engine_failure and profile.get("alertEngineMismatch", True):
-            rpm_values = list(rpms.values())
-            if len(rpm_values) >= 2 and max(rpm_values) > 0:
-                mismatch = (max(rpm_values) - min(rpm_values)) / max(rpm_values) * 100
-                if mismatch > float(profile.get("engineMismatchPct", 18)):
-                    current.add("engine-mismatch")
 
         return current
 
@@ -908,8 +922,29 @@ class HostAudioService:
 
     def _random_chatter_delay(self) -> float:
         audio = self._audio_settings()
-        minimum = max(5.0, float(audio.get("radioChatterMinSeconds", 45.0)))
-        maximum = max(minimum, float(audio.get("radioChatterMaxSeconds", 120.0)))
+        density = str(audio.get("radioChatterTrafficDensity", "busy")).strip().lower()
+
+        # Radio traffic is intentionally irregular rather than metronomic. Busy mode
+        # produces clusters of calls with occasional natural lulls, similar to an
+        # active operational frequency. Custom mode retains the raw interval controls.
+        roll = random.random()
+        if density == "busy":
+            if roll < 0.45:
+                return random.uniform(2.0, 5.5)
+            if roll > 0.94:
+                return random.uniform(24.0, 42.0)
+            minimum, maximum = 6.0, 18.0
+        elif density == "normal":
+            if roll < 0.22:
+                return random.uniform(5.0, 10.0)
+            if roll > 0.95:
+                return random.uniform(40.0, 70.0)
+            minimum, maximum = 14.0, 32.0
+        elif density == "light":
+            minimum, maximum = 40.0, 100.0
+        else:
+            minimum = max(2.0, float(audio.get("radioChatterMinSeconds", 6.0)))
+            maximum = max(minimum, float(audio.get("radioChatterMaxSeconds", 18.0)))
         return random.uniform(minimum, maximum)
 
     def _chatter_eligible(self) -> bool:
@@ -917,7 +952,9 @@ class HostAudioService:
         if not audio.get("enabled", True) or not audio.get("radioChatterEnabled", False):
             return False
         snapshot = self._last_snapshot
-        if not snapshot.get("connected") or self._audio_inhibited:
+        # Chatter is an independent radio channel. The low-speed inhibit only
+        # suppresses Betty/control warnings; it must not silence VAICOM traffic.
+        if not snapshot.get("connected"):
             return False
         if self._chatter_playing:
             return False
@@ -931,19 +968,23 @@ class HostAudioService:
         state = snapshot.get("state", {}) or {}
         ias = _number(_pick(state, "IAS, km/h"))
         if ias is None:
-            return False
+            # External radio traffic can continue even if a specific aircraft does
+            # not expose IAS for a frame. Airborne-only mode remains conservative.
+            return not bool(audio.get("radioChatterOnlyAirborne", False))
         context = self._chatter_context(snapshot)
         if context == "ground":
-            if audio.get("radioChatterOnlyAirborne", True):
-                return False
-            if ias <= max(0.0, float(audio.get("stationarySpeedKmh", 0.5))):
+            # Carrier/taxi radio traffic is valid even when Betty is inhibited.
+            # Users can explicitly restore airborne-only chatter in Settings.
+            if audio.get("radioChatterOnlyAirborne", False):
                 return False
         elif ias < max(0.0, float(audio.get("radioChatterMinimumIasKmh", 80.0))):
             return False
         return True
 
     async def _chatter_scheduler(self) -> None:
-        self._next_chatter_at = time.monotonic() + self._random_chatter_delay()
+        audio = self._audio_settings()
+        initial_delay = random.uniform(1.5, 4.0) if audio.get("radioChatterEnabled", False) else self._random_chatter_delay()
+        self._next_chatter_at = time.monotonic() + initial_delay
         while not self._stop.is_set():
             await asyncio.sleep(0.5)
             audio = self._audio_settings()
@@ -968,7 +1009,7 @@ class HostAudioService:
 
     def enqueue_chatter(self, path: Path, category: str, force: bool = False) -> bool:
         audio = self._audio_settings()
-        if (not audio.get("enabled", True) or not audio.get("radioChatterEnabled", False) or self._audio_inhibited) and not force:
+        if (not audio.get("enabled", True) or not audio.get("radioChatterEnabled", False)) and not force:
             return False
         if self.chatter_playback_task and not self.chatter_playback_task.done():
             return False
@@ -977,6 +1018,112 @@ class HostAudioService:
             name="thunderscope-chatter-playback",
         )
         return True
+
+    def _prepare_chatter_clip(self, path: Path) -> Path:
+        """Create a louder cockpit-radio version using only the Python stdlib.
+
+        Python 3.13 removed ``audioop``, so this intentionally avoids it and
+        supports the PCM widths used by the bundled VAICOM files.
+        """
+        audio = self._audio_settings()
+        gain_db = max(0.0, min(24.0, float(audio.get("radioChatterGainDb", 10.0) or 10.0)))
+        cockpit_fx = bool(audio.get("radioChatterCockpitFx", True))
+        if gain_db <= 0.01 and not cockpit_fx:
+            return path
+
+        try:
+            with wave.open(str(path), "rb") as wav_file:
+                channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                frame_rate = wav_file.getframerate()
+                frames = wav_file.readframes(wav_file.getnframes())
+
+            if sample_width not in (1, 2, 4) or channels < 1:
+                return path
+
+            # Decode little-endian PCM into signed integer samples. 8-bit WAV is
+            # unsigned, while 16/32-bit PCM is signed.
+            if sample_width == 1:
+                decoded = [int(value) - 128 for value in frames]
+                full_scale = 127
+            else:
+                typecode = "h" if sample_width == 2 else "i"
+                pcm = array(typecode)
+                pcm.frombytes(frames)
+                if pcm.itemsize != sample_width:
+                    return path
+                decoded = list(pcm)
+                full_scale = (1 << (sample_width * 8 - 1)) - 1
+
+            # Radio chatter is intentionally mono. This also guarantees both ears
+            # receive the transmission and prevents a quiet one-sided recording.
+            if channels > 1:
+                mono: list[float] = []
+                usable = len(decoded) - (len(decoded) % channels)
+                for offset in range(0, usable, channels):
+                    mono.append(sum(decoded[offset:offset + channels]) / channels)
+            else:
+                mono = [float(value) for value in decoded]
+
+            if not mono:
+                return path
+
+            if cockpit_fx:
+                # Lightweight speech-band filter (~280 Hz high-pass / ~4.5 kHz
+                # low-pass). This is deliberately subtle: enough to cut through
+                # engine noise without turning every clip into telephone audio.
+                dt = 1.0 / max(1, frame_rate)
+                hp_rc = 1.0 / (2.0 * math.pi * 280.0)
+                hp_alpha = hp_rc / (hp_rc + dt)
+                lp_rc = 1.0 / (2.0 * math.pi * 4500.0)
+                lp_alpha = dt / (lp_rc + dt)
+                previous_input = mono[0]
+                high_pass = 0.0
+                low_pass = 0.0
+                filtered: list[float] = []
+                for sample in mono:
+                    high_pass = hp_alpha * (high_pass + sample - previous_input)
+                    previous_input = sample
+                    low_pass += lp_alpha * (high_pass - low_pass)
+                    filtered.append(low_pass)
+                mono = filtered
+
+            gain = 10.0 ** (gain_db / 20.0)
+            # A little deliberate limiting/compression makes quiet radio speech
+            # stay audible over War Thunder's engine mix while avoiding wraparound.
+            limit = full_scale * 0.97
+            processed_values: list[int] = []
+            for sample in mono:
+                boosted = sample * gain
+                if boosted > limit:
+                    boosted = limit
+                elif boosted < -limit:
+                    boosted = -limit
+                processed_values.append(int(round(boosted)))
+
+            if sample_width == 1:
+                processed = bytes(max(0, min(255, value + 128)) for value in processed_values)
+            else:
+                typecode = "h" if sample_width == 2 else "i"
+                output_pcm = array(typecode, processed_values)
+                processed = output_pcm.tobytes()
+
+            temp_dir = self.base_dir / "data" / "cache"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                prefix="radio_", suffix=".wav", delete=False, dir=temp_dir
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+
+            with wave.open(str(temp_path), "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(sample_width)
+                out.setframerate(frame_rate)
+                out.writeframes(processed)
+            return temp_path
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("Radio chatter processing failed (%s): %s", path.name, exc)
+            return path
 
     async def test_chatter(self) -> dict[str, Any] | None:
         selected = self._choose_chatter_clip()
@@ -997,9 +1144,13 @@ class HostAudioService:
             self._last_error = f"Radio clip is not a readable PCM WAV: {path.name} ({exc})"
             return False
         duration = max(0.1, min(duration, 180.0))
+        processed_path: Path | None = None
         try:
             self._chatter_playing = True
-            chatter_volume = int(self._audio_settings().get("radioChatterVolume", 50))
+            chatter_volume = int(self._audio_settings().get("radioChatterVolume", 70))
+            playback_path = self._prepare_chatter_clip(path)
+            if playback_path != path:
+                processed_path = playback_path
             if self.windows_host:
                 player_script = self.base_dir / "play_chatter.ps1"
                 if not player_script.exists():
@@ -1007,14 +1158,14 @@ class HostAudioService:
                     return False
                 self._chatter_process = await asyncio.create_subprocess_exec(
                     "powershell.exe", "-Sta", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                    "-File", str(player_script), "-Path", str(path),
+                    "-File", str(player_script), "-Path", str(playback_path),
                     "-Volume", str(max(0, min(100, chatter_volume))),
                     "-DurationSeconds", f"{duration:.3f}",
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.PIPE,
                 )
             else:
-                command = self._linux_wav_command(path, chatter_volume)
+                command = self._linux_wav_command(playback_path, chatter_volume)
                 if not command:
                     self._last_error = "No Linux WAV player found. Install pipewire-bin, pulseaudio-utils, ffmpeg, mpv or alsa-utils."
                     return False
@@ -1031,7 +1182,7 @@ class HostAudioService:
                 chatter_disabled = not current_audio.get("enabled", True) or not current_audio.get("radioChatterEnabled", False)
                 mix_with_warnings = bool(current_audio.get("radioChatterMixWithWarnings", True))
                 warning_should_interrupt = (not mix_with_warnings and self._urgent_pending.is_set())
-                if warning_should_interrupt or self._audio_inhibited or (not force and chatter_disabled):
+                if warning_should_interrupt or (not force and chatter_disabled):
                     interrupted = True
                     break
                 if self._chatter_process and self._chatter_process.returncode is not None:
@@ -1066,6 +1217,11 @@ class HostAudioService:
         finally:
             if self._chatter_process is not None:
                 await self._stop_chatter_process()
+            if processed_path is not None:
+                try:
+                    processed_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self._chatter_playing = False
 
     def _refresh_urgent_pending(self) -> None:
@@ -1084,19 +1240,31 @@ class HostAudioService:
                 break
         self._urgent_pending.clear()
 
-    def enqueue(self, key: str, phrase: str | None = None, priority: int | None = None, force: bool = False) -> bool:
+    def enqueue(
+        self, key: str, phrase: str | None = None, priority: int | None = None,
+        force: bool = False, voice_override: str | None = None,
+        rate_override: int | None = None, volume_override: int | None = None,
+        allow_custom_wav: bool = True,
+    ) -> bool:
         if (not self._audio_settings().get("enabled", True) or self._audio_inhibited) and not force:
             return False
         definition = ALERT_DEFINITIONS.get(key, ALERT_DEFINITIONS["test"])
         resolved_priority = int(definition["priority"] if priority is None else priority)
         self._sequence += 1
-        self.queue.put_nowait((
-            resolved_priority,
-            self._sequence,
-            key,
-            phrase or str(definition["phrase"]),
-            force,
-        ))
+        self.queue.put_nowait(
+            (
+                resolved_priority,
+                self._sequence,
+                key,
+                phrase or str(definition["phrase"]),
+                force,
+                voice_override,
+                rate_override,
+                volume_override,
+                allow_custom_wav,
+                time.time(),
+            )
+        )
         if key != "test":
             self._last_warning_activity = time.time()
         if resolved_priority <= 2:
@@ -1108,11 +1276,30 @@ class HostAudioService:
 
     async def _worker(self) -> None:
         while not self._stop.is_set():
-            priority, sequence, key, phrase, force = await self.queue.get()
-            del sequence
+            (
+                priority,
+                sequence,
+                key,
+                phrase,
+                force,
+                voice_override,
+                rate_override,
+                volume_override,
+                allow_custom_wav,
+                enqueued_at,
+            ) = await self.queue.get()
+            del priority, sequence, enqueued_at
             self._refresh_urgent_pending()
             try:
                 audio = self._audio_settings()
+                if (
+                    not force
+                    and key in CONDITION_BOUND_ALERTS
+                    and key not in self._active_conditions
+                ):
+                    self._dropped_stale_alerts += 1
+                    self.logger.debug("Dropped stale audio alert: %s", key)
+                    continue
                 if key.startswith("radio-chatter::"):
                     # Chatter has its own playback task from v0.10.2 onward.
                     continue
@@ -1122,16 +1309,17 @@ class HostAudioService:
                     self._last_error = "Host voice alerts require Windows or Linux."
                     continue
                 played = False
-                if audio.get("preferCustomWav", True):
+                resolved_volume = int(audio.get("volume", 90) if volume_override is None else volume_override)
+                if allow_custom_wav and audio.get("preferCustomWav", True):
                     clip = self.audio_dir / f"{key}.wav"
                     if clip.exists():
-                        played = await asyncio.to_thread(self._play_wav, clip, int(audio.get("volume", 90)))
+                        played = await asyncio.to_thread(self._play_wav, clip, resolved_volume)
                 if not played:
                     played = await self._speak_tts(
                         phrase,
-                        str(audio.get("voice", "")),
-                        int(audio.get("rate", -1)),
-                        int(audio.get("volume", 90)),
+                        str(audio.get("voice", "") if voice_override is None else voice_override),
+                        int(audio.get("rate", -1) if rate_override is None else rate_override),
+                        resolved_volume,
                     )
                 if played:
                     self._last_spoken = {"key": key, "phrase": phrase, "timestamp": time.time()}
@@ -1418,6 +1606,7 @@ class HostAudioService:
             "tts_backend": self._linux_tts_backend() if self.linux_host else ("Windows SAPI" if self.windows_host else None),
             "voice": audio.get("voice", ""),
             "queue_depth": self.queue.qsize(),
+            "dropped_stale_alerts": self._dropped_stale_alerts,
             "last_spoken": self._last_spoken,
             "last_error": self._last_error,
             "controls": dict(self._control_confirmed),
@@ -1434,6 +1623,7 @@ class HostAudioService:
                 "playing": self._chatter_playing,
                 "context": self._chatter_context(self._last_snapshot),
                 "source": str(audio.get("radioChatterSource", "vaicom")),
+                "traffic_density": str(audio.get("radioChatterTrafficDensity", "busy")),
                 "selected_vaicom_theme": str(audio.get("radioChatterVaicomTheme", "Navy")),
                 "mix_with_warnings": bool(audio.get("radioChatterMixWithWarnings", True)),
                 "volume": int(audio.get("radioChatterVolume", 50)),

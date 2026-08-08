@@ -1,0 +1,161 @@
+{
+  "version": 19,
+  "defaults": {
+    "fuelReservePct": 25,
+    "fuelCriticalPct": 15,
+    "jokerFuelPct": 35,
+    "highAoADeg": 18,
+    "stallAoADeg": 22,
+    "highG": 8.0,
+    "gCaution": 4.0,
+    "lowG": -3.0,
+    "sinkRateWarning": -4.5,
+    "sinkRateMaxIas": 500,
+    "gearOverspeedKmh": 450,
+    "flapOverspeedKmh": 500,
+    "landingIasMin": 230,
+    "landingIasMax": 360,
+    "carrierApproachIasMin": 190,
+    "carrierApproachIasMax": 310,
+    "carrierTargetAoADeg": 8.0,
+    "carrierAoAToleranceDeg": 2.5,
+    "carrierMaxBankDeg": 12.0,
+    "carrierMaxSinkMps": -7.0,
+    "carrierGlidepathDeg": 3.5,
+    "engineMismatchPct": 18,
+    "overspeedKmh": 1300,
+    "approachCheckMaxIas": 420,
+    "positiveRateMps": 2.0,
+    "dontSinkMps": -2.0,
+    "takeoffWarningWindowSeconds": 20.0,
+    "hardLandingMps": -6.0,
+    "energyLowIasKmh": 350,
+    "energyLowDecelKmhS": -8.0,
+    "speedbrakeThrottlePct": 80,
+    "engineOilTempWarningC": 120,
+    "engineWaterTempWarningC": 120,
+    "engineHeadTempWarningC": 260,
+    "oilPressureDropPct": 35,
+    "engineFailureDropPct": 20,
+    "engineFailureThrottlePct": 55,
+    "alertsEnabled": true,
+    "alertLowFuel": true,
+    "alertJokerFuel": true,
+    "alertHighG": true,
+    "alertGCaution": true,
+    "alertHighAoA": true,
+    "alertStall": true,
+    "alertMachOne": true,
+    "alertSinkRate": true,
+    "alertGearOverspeed": true,
+    "alertFlapOverspeed": true,
+    "alertEngineMismatch": true,
+    "alertEngineTemperature": true,
+    "alertOilPressure": true,
+    "alertEngineFailure": true,
+    "alertCheckGear": true,
+    "alertCheckFlaps": true,
+    "alertCheckAfterburner": true,
+    "alertPositiveRate": true,
+    "alertDontSink": true,
+    "alertHardLanding": true,
+    "alertSpeedbrake": true,
+    "alertOverspeed": false,
+    "alertEnergyLow": false,
+    "alertTelemetryStale": true,
+    "alertTelemetryRestored": true
+  },
+  "profiles": {},
+  "display": {
+    "autoFlightPhase": true,
+    "compactEngineNormal": true,
+    "mapAlerts": true,
+    "mapAlertDurationSeconds": 4,
+    "theme": "dark"
+  },
+  "audio": {
+    "enabled": true,
+    "preferCustomWav": true,
+    "voice": "",
+    "rate": -1,
+    "volume": 90,
+    "repeatCooldownSeconds": 12.0,
+    "minimumGapSeconds": 1.0,
+    "suppressWhenStationary": true,
+    "stationarySpeedKmh": 70.0,
+    "announceControlChanges": true,
+    "radioChatterEnabled": false,
+    "radioChatterSource": "vaicom",
+    "radioChatterVaicomTheme": "Navy",
+    "radioChatterContextAware": true,
+    "radioChatterOnlyAirborne": false,
+    "radioChatterMinSeconds": 6.0,
+    "radioChatterMaxSeconds": 18.0,
+    "radioChatterQuietAfterWarningSeconds": 10.0,
+    "radioChatterMinimumIasKmh": 80.0,
+    "radioChatterMixWithWarnings": true,
+    "radioChatterVolume": 50,
+    "lsoEnabled": true,
+    "lsoVoice": "",
+    "lsoRate": -1,
+    "lsoVolume": 92,
+    "radioChatterTrafficDensity": "busy"
+  },
+  "controls": {
+    "enabled": true,
+    "panelPosition": "right",
+    "autoHideSeconds": 20,
+    "actions": {
+      "tgp_view": {
+        "label": "TGP VIEW",
+        "key": "CTRL+ALT+1",
+        "mode": "tap"
+      },
+      "stabilize": {
+        "label": "STAB",
+        "key": "CTRL+ALT+2",
+        "mode": "tap"
+      },
+      "ag_lock": {
+        "label": "A/G LOCK",
+        "key": "CTRL+ALT+3",
+        "mode": "tap"
+      },
+      "laser": {
+        "label": "LASER",
+        "key": "CTRL+ALT+4",
+        "mode": "tap"
+      },
+      "set_target": {
+        "label": "SET SPI",
+        "key": "CTRL+ALT+5",
+        "mode": "tap"
+      },
+      "clear_target": {
+        "label": "CLR SPI",
+        "key": "CTRL+ALT+6",
+        "mode": "tap"
+      },
+      "next_weapon": {
+        "label": "NEXT WPN",
+        "key": "CTRL+ALT+7",
+        "mode": "tap"
+      },
+      "fire_secondary": {
+        "label": "FIRE",
+        "key": "CTRL+ALT+8",
+        "mode": "tap"
+      },
+      "zoom_in": {
+        "label": "ZOOM +",
+        "key": "CTRL+ALT+9",
+        "mode": "hold"
+      },
+      "zoom_out": {
+        "label": "ZOOM \u2212",
+        "key": "CTRL+ALT+0",
+        "mode": "hold"
+      }
+    }
+  }
+}

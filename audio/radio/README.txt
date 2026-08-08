@@ -25,14 +25,16 @@ Behaviour
 - The configured interval is randomised between the minimum and maximum.
 - Context-aware mode prefers the current flight-phase folder, then generic.
 - Recent clips are avoided to reduce repetition.
-- Active Betty warnings suppress chatter.
-- A new Betty/control warning interrupts a chatter clip immediately.
+- VAICOM chatter and Betty/LSO warnings use independent playback channels.
+- Chatter continues underneath warnings by default; this can be disabled in Settings.
 - Chatter is produced by the Windows or Linux computer running ThunderScope, not the tablet.
 
 
 VAICOM Community integration
 -----------------------------
-Run import_vaicom_chatter.bat. VAICOM themes are stored under:
+Full release ZIPs include the VAICOM library. Source/lite installs can run
+import_vaicom_chatter.bat, import_vaicom_chatter.sh, or the Python importer.
+VAICOM themes are stored under:
   vaicom\Navy\*.wav
   vaicom\NATO\*.wav
   ...

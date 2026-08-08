@@ -1,4 +1,96 @@
+# v0.13.4
+
+- Retired automatic engine-related Betty/tablet cues: engine temperature, oil pressure, engine failure, engine mismatch, and check-afterburner.
+- Flap configuration changes on the tablet now use a guaranteed transient toast and clear after 2.6 seconds.
+- Bumped the map/service-worker cache so tablets do not retain the old alert behaviour.
+
+# v0.13.3
+
+- Fixed invisible RNG ring caused by normalised-distance values being passed directly to pixel-space canvas drawing.
+- Fuel burn now uses an 8–30 second rolling window instead of adjacent 10 Hz samples.
+- Added RNG calibration/estimate readout and `> VIEW` indication.
+
+# ThunderScope changelog
+
+## 0.13.1
+
+- Replaced legacy Windows `keybd_event` with scan-code `SendInput`.
+- Added keyboard-chord support.
+- Migrated untouched F13–F22 defaults to `CTRL+ALT+1` through `CTRL+ALT+0`; custom mappings are preserved.
+- Added a documented Notepad `K` diagnostic to distinguish Windows input problems from War Thunder filtering.
+
+## 0.13.0
+
+- Added tablet TGP / air-to-ground virtual control drawer.
+- Added Windows one-key input bridge with F13–F22 defaults.
+- Added tap and hold/release control actions plus stuck-key release failsafes.
+- Added control-binding, panel-position and auto-hide settings.
+- Opening TGP mode dismisses competing route/carrier overlays while keeping the map visible.
+
+# v0.12.6 — Heading Vector + True Player-Centred Map
+
+- Added a toggleable solid heading vector (`VEC`) projected from the aircraft nose.
+- Heading vector is independent of route guidance and remains correct in HDG and north-up modes.
+- Removed viewport edge clamping that displaced the aircraft near tactical-map boundaries.
+- Player remains centred in follow mode; the renderer may show empty margin outside the tactical-map image at map edges.
+- Preserved manual pan, zoom, recenter, route planner, LSO, Betty, VAICOM and v0.12.5 map symbology.
+
+# v0.12.5 — Map Symbology + Busy Radio Net
+
+- Restores distinct map symbology using War Thunder `type` + `icon` data: fighter, bomber, assault aircraft, tracked, wheeled and air-defence ground units, bombing/defending objectives, respawn bases and ships.
+- Team affiliation remains driven by War Thunder object colour; symbol shape now carries object class.
+- Adds radio traffic density presets. `Busy operational net` is the default and uses clustered transmissions with occasional natural lulls.
+- Migrates the old 45–120 second default chatter interval to 6–18 seconds for existing installations that never customised it.
+- First chatter after enabling is scheduled within roughly 1.5–4 seconds.
+
 # Changelog
+
+## 0.12.4
+
+- Fixed Route Planner and Carrier Landing Assistant visibility on tablet layouts.
+- Added dedicated LSO and HIDE controls beside NAV.
+- Collapsed carrier setup by default and limited the carrier HUD to inbound approaches.
+- Decoupled VAICOM chatter from the 70 km/h Betty low-speed inhibit.
+- Enabled ground/carrier-deck chatter by default while retaining the airborne-only option.
+
+## 0.12.3
+
+- Fix route planner hide/close hit-testing on the map.
+- Add dedicated HIDE control beside NAV.
+- Allow direct route-point removal by tapping its map marker.
+- Suppress carrier approach HUD below/equal 70 km/h IAS.
+
+## 0.12.2
+
+- Removed the v0.12.1 LAN token/cookie authentication layer; trusted-LAN mode again opens directly on port 8765.
+- Raised the default automatic Betty/control-cue low-speed inhibit threshold to 70 km/h, including automatic migration of older settings.
+- Added a visible low-speed Betty inhibit threshold control to Settings.
+- Reworked engine-failure detection to require an RPM collapse from a previously healthy engine, preventing false alerts for engines that are already shut down.
+- Preserved v0.12.1 stale-queue checking, generated-state Git hygiene, escaping and source/full release split.
+
+## 0.12.1
+
+- Added shared-token protection for non-loopback LAN API and WebSocket access.
+- Added persistent token generation, authenticated tablet URLs and one-step token rotation.
+- Stopped tracking generated settings, navigation plans, databases and LAN credentials.
+- Added separate source/lite and full-release packaging guidance for the VAICOM library.
+- Added dequeue-time relevance checks so cleared flight warnings are not spoken late.
+- Added stale-alert diagnostics to the host-audio status endpoint.
+- Escaped server-originated strings used by reports, settings and route templates.
+- Reformatted and annotated the telemetry hub and settings loader for maintainability.
+- Updated browser cache and application versioning to 0.12.1.
+
+## 0.12.0
+
+- Added manual stern/bow carrier-deck setup with configurable deck altitude, glidepath, touchdown offset and activation range.
+- Added an extended final line, touchdown marker and dedicated synthetic carrier-approach HUD.
+- Added live deck heading, distance, centreline error, glidepath error, IAS, AoA, bank, sink-rate, gear and flap monitoring.
+- Added host-side LSO TTS callouts with independently selectable voice, rate and volume.
+- Added distance milestones, measured-condition corrective callouts and conservative close-in wave-off logic.
+- Added aircraft-specific carrier approach IAS, AoA, bank, sink-rate and glidepath settings.
+- Added inferred likely-arrested, bolter, deck-crossing and wave-off outcomes with configurable pass grading.
+- Preserved all navigation, map controls, Betty cues and 2,269 VAICOM chatter clips.
+- Updated application, browser cache and package versioning to 0.12.0.
 
 ## 0.11.0
 

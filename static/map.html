@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="/manifest.webmanifest">
   <title>ThunderScope Navigation Map</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=0.11.0">
+  <link rel="stylesheet" href="/static/css/styles.css?v=0.13.4">
 </head>
 <body class="map-page">
 <div class="map-shell" id="mapShell">
@@ -34,6 +34,22 @@
       <div><small>ETA</small><strong id="navHudEta">—</strong><span id="navHudEtaClock">—</span></div>
       <div><small>STEER</small><strong id="navHudSteer">—</strong><span id="navHudTrend">—</span></div>
     </div>
+  </aside>
+
+  <aside class="carrier-approach-hud glass-panel hidden" id="carrierHud" aria-live="polite">
+    <div class="carrier-hud-head"><span>SYNTHETIC LSO</span><strong id="carrierHudName">CARRIER</strong><b id="carrierHudStatus">FINAL</b></div>
+    <div class="carrier-ball" aria-label="Synthetic carrier glidepath and lineup indicator">
+      <span class="carrier-ball-horizontal"></span><span class="carrier-ball-vertical"></span><i id="carrierBallDot"></i>
+    </div>
+    <div class="carrier-hud-grid">
+      <div><small>GLIDE</small><strong id="carrierHudGlide">—</strong><span id="carrierHudGlideError">—</span></div>
+      <div><small>LINE-UP</small><strong id="carrierHudLineup">—</strong><span id="carrierHudCrossTrack">—</span></div>
+      <div><small>DIST</small><strong id="carrierHudDistance">—</strong><span id="carrierHudDeckHeading">—</span></div>
+      <div><small>IAS / AOA</small><strong id="carrierHudIas">—</strong><span id="carrierHudAoa">—</span></div>
+      <div><small>SINK</small><strong id="carrierHudSink">—</strong><span id="carrierHudBank">—</span></div>
+      <div><small>CONFIG</small><strong id="carrierHudGear">—</strong><span id="carrierHudFlaps">—</span></div>
+    </div>
+    <div class="carrier-waveoff hidden" id="carrierWaveoff">WAVE OFF</div>
   </aside>
 
   <section class="map-navigation-panel glass-panel hidden" id="navigationPanel" aria-label="Route planner">
@@ -74,6 +90,37 @@
       <span id="navRunwayMetrics">—</span>
     </section>
 
+    <details class="carrier-config">
+      <summary><span>CARRIER LANDING AID</span><b id="carrierConfigBadge">NOT SET</b></summary>
+      <div class="carrier-config-actions">
+        <button type="button" id="setupCarrier">MARK STERN + BOW</button>
+        <button type="button" id="clearCarrier" class="danger">CLEAR</button>
+        <button type="button" id="testLso">TEST LSO</button>
+        <button type="button" id="loadCarrierProfile">LOAD AIRCRAFT PROFILE</button>
+      </div>
+      <p class="nav-map-hint" id="carrierSetupHint">Mark the stern first, then the bow. The landing direction runs stern to bow.</p>
+      <div class="carrier-config-grid">
+        <label>Deck altitude (m)<input type="number" id="carrierDeckAltitude" min="-100" max="5000" step="1" value="20"></label>
+        <label>Glidepath (°)<input type="number" id="carrierGlidepath" min="1.5" max="8" step="0.1" value="3.5"></label>
+        <label>Touchdown from stern (m)<input type="number" id="carrierTouchdownOffset" min="0" max="500" step="5" value="65"></label>
+        <label>Approach activation (km)<input type="number" id="carrierApproachDistance" min="1" max="50" step="0.5" value="12"></label>
+        <label>Approach IAS min<input type="number" id="carrierIasMin" min="40" max="1000" step="5" value="190"></label>
+        <label>Approach IAS max<input type="number" id="carrierIasMax" min="50" max="1200" step="5" value="310"></label>
+        <label>Target AoA (°)<input type="number" id="carrierTargetAoa" min="-10" max="40" step="0.5" value="8"></label>
+        <label>AoA tolerance (°)<input type="number" id="carrierAoaTolerance" min="0.5" max="15" step="0.5" value="2.5"></label>
+        <label>Maximum final bank (°)<input type="number" id="carrierMaxBank" min="1" max="60" step="1" value="12"></label>
+        <label>Maximum sink rate (m/s)<input type="number" id="carrierMaxSink" min="-30" max="-0.5" step="0.5" value="-7"></label>
+      </div>
+      <label class="nav-auto-row"><input type="checkbox" id="carrierCallouts" checked> Spoken LSO corrections</label>
+      <label class="nav-auto-row"><input type="checkbox" id="carrierWaveoffEnabled" checked> Conservative automatic wave-off call</label>
+      <label class="nav-auto-row"><input type="checkbox" id="carrierGradeEnabled" checked> Grade each carrier pass</label>
+      <section class="carrier-grade-summary hidden" id="carrierGradeSummary">
+        <div><small>LAST PASS</small><strong id="carrierGradeResult">—</strong></div>
+        <b id="carrierGradeScore">—</b>
+        <span id="carrierGradeMetrics">—</span>
+      </section>
+    </details>
+
     <div class="nav-route-heading"><span>ROUTE</span><span id="navRouteTotal">0 points</span></div>
     <ol class="nav-route-list" id="navigationRouteList"></ol>
 
@@ -85,6 +132,28 @@
     </div>
     <label class="nav-auto-row"><input type="checkbox" id="navAutoAdvance" checked> Automatically advance within <input type="number" id="navArrivalRadius" min="100" max="5000" step="50" value="750"> m</label>
   </section>
+
+
+  <aside class="tgp-control-panel glass-panel hidden" id="tgpControlPanel" aria-label="Targeting pod controls">
+    <header class="tgp-panel-head">
+      <div><small>VIRTUAL COCKPIT</small><strong>TGP / A-G</strong></div>
+      <button type="button" id="closeTgpPanel" aria-label="Close targeting pod controls">×</button>
+    </header>
+    <div class="tgp-panel-status"><span id="tgpInputStatus">WINDOWS INPUT</span><small>One touch = one configured key</small></div>
+    <div class="tgp-button-grid" id="tgpButtonGrid">
+      <button type="button" data-tgp-action="tgp_view"><b>TGP VIEW</b><small>CTRL+ALT+1</small></button>
+      <button type="button" data-tgp-action="stabilize"><b>STAB</b><small>CTRL+ALT+2</small></button>
+      <button type="button" data-tgp-action="ag_lock"><b>A/G LOCK</b><small>CTRL+ALT+3</small></button>
+      <button type="button" data-tgp-action="laser"><b>LASER</b><small>CTRL+ALT+4</small></button>
+      <button type="button" data-tgp-action="set_target"><b>SET SPI</b><small>CTRL+ALT+5</small></button>
+      <button type="button" data-tgp-action="clear_target"><b>CLR SPI</b><small>CTRL+ALT+6</small></button>
+      <button type="button" data-tgp-action="next_weapon"><b>NEXT WPN</b><small>CTRL+ALT+7</small></button>
+      <button type="button" data-tgp-action="zoom_in" data-tgp-hold="true"><b>ZOOM +</b><small>HOLD · CTRL+ALT+9</small></button>
+      <button type="button" data-tgp-action="zoom_out" data-tgp-hold="true"><b>ZOOM −</b><small>HOLD · CTRL+ALT+0</small></button>
+      <button type="button" class="tgp-fire-button" data-tgp-action="fire_secondary"><b>FIRE</b><small>CTRL+ALT+8</small></button>
+    </div>
+    <p class="tgp-panel-note">Bind these keyboard chords to the matching War Thunder controls. Each tablet action represents one aircraft control; no chained game actions are sent.</p>
+  </aside>
 
   <aside class="map-flight-strip glass-panel">
     <div><small>IAS</small><strong id="mapIas">—</strong><span>km/h</span></div>
@@ -100,13 +169,18 @@
     <button id="zoomOut" aria-label="Zoom out">−</button>
     <button id="toggleAlerts" title="Toggle alerts">♢</button>
     <button id="fullscreenMap" aria-label="Toggle fullscreen">⛶</button>
-    <button id="toggleNavigation" class="map-wide-button map-text-button">NAV</button>
+    <button id="toggleHeadingVector" class="map-text-button" aria-label="Toggle heading vector" aria-pressed="false" title="Show heading vector">VEC</button>
+    <button id="toggleRangeRing" class="map-text-button" aria-label="Toggle fuel range ring" aria-pressed="false" title="Show estimated fuel range ring">RNG</button>
+    <button id="toggleNavigation" class="map-text-button">NAV</button>
+    <button id="toggleTgpPanel" class="map-text-button" aria-label="Toggle targeting pod control panel">TGP</button>
+    <button id="toggleCarrierHud" class="map-text-button active" aria-label="Toggle carrier landing assistant">LSO</button>
+    <button id="hideNavigation" class="map-text-button" aria-label="Hide route planner and carrier assistant">HIDE</button>
   </nav>
 
   <div class="map-toast glass-panel hidden" id="mapToast" aria-live="polite"></div>
-  <div class="map-help glass-panel" id="mapHelp">Tap NAV to add a target, route and home airfield</div>
+  <div class="map-help glass-panel" id="mapHelp">VEC heading · RNG fuel range · NAV route · TGP A/G controls · LSO carrier aid · HIDE clears panels</div>
   <div class="map-wait" id="mapWait"><div class="radar-loader"><span></span></div><h1>Waiting for tactical map</h1><p>Enter a match or test flight in War Thunder.</p></div>
 </div>
-<script src="/static/js/map.js?v=0.11.0" defer></script>
+<script src="/static/js/map.js?v=0.13.4" defer></script>
 </body>
 </html>

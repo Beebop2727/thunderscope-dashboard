@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from host_audio import ALERT_DEFINITIONS, HostAudioService
+from input_bridge import InputBridge, key_spec_valid, normalise_key_name
 from telemetry_values import GPeakMonitor, extract_g_load
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -47,7 +48,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 DEFAULT_NAVIGATION: dict[str, Any] = {
-    "version": 1,
+    "version": 2,
     "revision": 0,
     "map_generation": None,
     "active": False,
@@ -55,11 +56,34 @@ DEFAULT_NAVIGATION: dict[str, Any] = {
     "auto_advance": True,
     "arrival_radius_m": 750,
     "points": [],
+    "carrier": {
+        "enabled": False,
+        "name": "CARRIER",
+        "stern": None,
+        "bow": None,
+        "deck_altitude_m": 20.0,
+        "glidepath_deg": 3.5,
+        "touchdown_offset_m": 65.0,
+        "approach_distance_m": 12000.0,
+        "callouts_enabled": True,
+        "waveoff_enabled": True,
+        "landing_grade_enabled": True,
+        "profile": {
+            "approach_ias_min": 190.0,
+            "approach_ias_max": 310.0,
+            "target_aoa_deg": 8.0,
+            "aoa_tolerance_deg": 2.5,
+            "max_bank_deg": 12.0,
+            "max_sink_mps": -7.0,
+            "lineup_tolerance_m": 35.0,
+        },
+        "last_grade": None,
+    },
 }
 
 
 DEFAULT_SETTINGS: dict[str, Any] = {
-    "version": 11,
+    "version": 20,
     "defaults": {
         "fuelReservePct": 25,
         "fuelCriticalPct": 15,
@@ -75,6 +99,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "flapOverspeedKmh": 500,
         "landingIasMin": 230,
         "landingIasMax": 360,
+        "carrierApproachIasMin": 190,
+        "carrierApproachIasMax": 310,
+        "carrierTargetAoADeg": 8.0,
+        "carrierAoAToleranceDeg": 2.5,
+        "carrierMaxBankDeg": 12.0,
+        "carrierMaxSinkMps": -7.0,
+        "carrierGlidepathDeg": 3.5,
         "engineMismatchPct": 18,
         "overspeedKmh": 1300,
         "approachCheckMaxIas": 420,
@@ -102,13 +133,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "alertSinkRate": True,
         "alertGearOverspeed": True,
         "alertFlapOverspeed": True,
-        "alertEngineMismatch": True,
-        "alertEngineTemperature": True,
-        "alertOilPressure": True,
-        "alertEngineFailure": True,
+        "alertEngineMismatch": False,
+        "alertEngineTemperature": False,
+        "alertOilPressure": False,
+        "alertEngineFailure": False,
         "alertCheckGear": True,
         "alertCheckFlaps": True,
-        "alertCheckAfterburner": True,
+        "alertCheckAfterburner": False,
         "alertPositiveRate": True,
         "alertDontSink": True,
         "alertHardLanding": True,
@@ -126,6 +157,23 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "mapAlertDurationSeconds": 4,
         "theme": "dark",
     },
+    "controls": {
+        "enabled": True,
+        "panelPosition": "right",
+        "autoHideSeconds": 20,
+        "actions": {
+            "tgp_view": {"label": "TGP VIEW", "key": "CTRL+ALT+1", "mode": "tap"},
+            "stabilize": {"label": "STAB", "key": "CTRL+ALT+2", "mode": "tap"},
+            "ag_lock": {"label": "A/G LOCK", "key": "CTRL+ALT+3", "mode": "tap"},
+            "laser": {"label": "LASER", "key": "CTRL+ALT+4", "mode": "tap"},
+            "set_target": {"label": "SET SPI", "key": "CTRL+ALT+5", "mode": "tap"},
+            "clear_target": {"label": "CLR SPI", "key": "CTRL+ALT+6", "mode": "tap"},
+            "next_weapon": {"label": "NEXT WPN", "key": "CTRL+ALT+7", "mode": "tap"},
+            "fire_secondary": {"label": "FIRE", "key": "CTRL+ALT+8", "mode": "tap"},
+            "zoom_in": {"label": "ZOOM +", "key": "CTRL+ALT+9", "mode": "hold"},
+            "zoom_out": {"label": "ZOOM −", "key": "CTRL+ALT+0", "mode": "hold"}
+        }
+    },
     "audio": {
         "enabled": True,
         "preferCustomWav": True,
@@ -135,19 +183,26 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "repeatCooldownSeconds": 12.0,
         "minimumGapSeconds": 1.0,
         "suppressWhenStationary": True,
-        "stationarySpeedKmh": 0.5,
+        "stationarySpeedKmh": 70.0,
         "announceControlChanges": True,
         "radioChatterEnabled": False,
         "radioChatterSource": "vaicom",
         "radioChatterVaicomTheme": "Navy",
         "radioChatterContextAware": True,
-        "radioChatterOnlyAirborne": True,
-        "radioChatterMinSeconds": 45.0,
-        "radioChatterMaxSeconds": 120.0,
+        "radioChatterOnlyAirborne": False,
+        "radioChatterTrafficDensity": "busy",
+        "radioChatterMinSeconds": 6.0,
+        "radioChatterMaxSeconds": 18.0,
         "radioChatterQuietAfterWarningSeconds": 10.0,
         "radioChatterMinimumIasKmh": 80.0,
         "radioChatterMixWithWarnings": True,
-        "radioChatterVolume": 50,
+        "radioChatterVolume": 70,
+        "radioChatterGainDb": 10.0,
+        "radioChatterCockpitFx": True,
+        "lsoEnabled": True,
+        "lsoVoice": "",
+        "lsoRate": -1,
+        "lsoVolume": 92,
     },
 }
 
@@ -158,16 +213,22 @@ def deep_copy(value: Any) -> Any:
 
 def load_settings() -> dict[str, Any]:
     if not SETTINGS_PATH.exists():
-        SETTINGS_PATH.write_text(json.dumps(DEFAULT_SETTINGS, indent=2), encoding="utf-8")
+        SETTINGS_PATH.write_text(
+            json.dumps(DEFAULT_SETTINGS, indent=2),
+            encoding="utf-8",
+        )
         return deep_copy(DEFAULT_SETTINGS)
     try:
-        loaded=json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-        if not isinstance(loaded,dict): raise ValueError("settings root must be an object")
-        version=loaded.get("version") if isinstance(loaded.get("version"),int) else 1
-        merged=deep_copy(DEFAULT_SETTINGS)
-        for section in ("defaults","display","audio"):
-            if isinstance(loaded.get(section),dict): merged[section].update(loaded[section])
-        if isinstance(loaded.get("profiles"),dict): merged["profiles"]=loaded["profiles"]
+        loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(loaded, dict):
+            raise ValueError("settings root must be an object")
+        version = loaded.get("version") if isinstance(loaded.get("version"), int) else 1
+        merged = deep_copy(DEFAULT_SETTINGS)
+        for section in ("defaults", "display", "audio", "controls"):
+            if isinstance(loaded.get(section), dict):
+                merged[section].update(loaded[section])
+        if isinstance(loaded.get("profiles"), dict):
+            merged["profiles"] = loaded["profiles"]
         if version < 4:
             if merged["defaults"].get("highG") in (8.5, 7.5):
                 merged["defaults"]["highG"] = 6.5
@@ -190,7 +251,68 @@ def load_settings() -> dict[str, Any]:
                 merged["audio"]["minimumGapSeconds"] = 1.0
         if version < 6 and merged["audio"].get("stationarySpeedKmh") == 1.0:
             merged["audio"]["stationarySpeedKmh"] = 0.5
-        merged["version"] = 11
+        if version < 13:
+            # v0.12.2: inhibit automatic Betty/control warnings while parked, taxiing,
+            # or sitting on a moving carrier. Manual preview/test audio remains available.
+            merged["audio"]["stationarySpeedKmh"] = 70.0
+        if version < 14:
+            # v0.12.5: VAICOM is a separate radio channel. It may remain active while
+            # Betty is low-speed inhibited, including while parked on a carrier deck.
+            # Previous releases defaulted this to True, which unintentionally silenced
+            # ambient radio traffic until the aircraft was airborne.
+            if loaded.get("audio", {}).get("radioChatterOnlyAirborne", True) is True:
+                merged["audio"]["radioChatterOnlyAirborne"] = False
+        if version < 15:
+            # v0.12.5: an operational radio net should sound busy. Older defaults could
+            # leave 45-120 second gaps, which made a healthy 2,269-clip library appear
+            # broken. Existing custom intervals are preserved; only the old defaults
+            # are migrated.
+            old_audio = loaded.get("audio", {}) if isinstance(loaded.get("audio", {}), dict) else {}
+            merged["audio"]["radioChatterTrafficDensity"] = old_audio.get("radioChatterTrafficDensity", "busy")
+            if float(old_audio.get("radioChatterMinSeconds", 45.0) or 45.0) == 45.0:
+                merged["audio"]["radioChatterMinSeconds"] = 6.0
+            if float(old_audio.get("radioChatterMaxSeconds", 120.0) or 120.0) == 120.0:
+                merged["audio"]["radioChatterMaxSeconds"] = 18.0
+        if version < 16:
+            # v0.12.7: make radio chatter easier to hear over War Thunder cockpit audio.
+            # Raise the default chatter volume modestly, add a gain stage, and enable
+            # optional cockpit-radio processing unless the user already customised them.
+            old_audio = loaded.get("audio", {}) if isinstance(loaded.get("audio", {}), dict) else {}
+            if float(old_audio.get("radioChatterVolume", 50) or 50) == 50:
+                merged["audio"]["radioChatterVolume"] = 70
+            merged["audio"]["radioChatterGainDb"] = float(old_audio.get("radioChatterGainDb", 10.0) or 10.0)
+            merged["audio"]["radioChatterCockpitFx"] = bool(old_audio.get("radioChatterCockpitFx", True))
+        if isinstance(loaded.get("controls", {}).get("actions") if isinstance(loaded.get("controls"), dict) else None, dict):
+            default_actions = deep_copy(DEFAULT_SETTINGS["controls"]["actions"])
+            for action_name, action_value in loaded["controls"]["actions"].items():
+                if action_name in default_actions and isinstance(action_value, dict):
+                    default_actions[action_name].update(action_value)
+            merged["controls"]["actions"] = default_actions
+        if version < 19:
+            old_controls = loaded.get("controls", {}) if isinstance(loaded.get("controls", {}), dict) else {}
+            old_actions = old_controls.get("actions", {}) if isinstance(old_controls.get("actions", {}), dict) else {}
+            old_defaults = {
+                "tgp_view":"F13","stabilize":"F14","ag_lock":"F15","laser":"F16",
+                "set_target":"F17","clear_target":"F18","next_weapon":"F19",
+                "fire_secondary":"F20","zoom_in":"F21","zoom_out":"F22",
+            }
+            for action_name, old_key in old_defaults.items():
+                current = old_actions.get(action_name, {}) if isinstance(old_actions.get(action_name, {}), dict) else {}
+                if normalise_key_name(current.get("key", old_key)) == old_key:
+                    merged["controls"]["actions"][action_name]["key"] = DEFAULT_SETTINGS["controls"]["actions"][action_name]["key"]
+        if version < 20:
+            # v0.13.4: retire automatic engine-related Betty/tablet cues.
+            engine_alert_keys = (
+                "alertEngineMismatch", "alertEngineTemperature", "alertOilPressure",
+                "alertEngineFailure", "alertCheckAfterburner",
+            )
+            for key in engine_alert_keys:
+                merged["defaults"][key] = False
+            for profile in merged["profiles"].values():
+                if isinstance(profile, dict):
+                    for key in engine_alert_keys:
+                        profile[key] = False
+        merged["version"] = 20
         return merged
     except (OSError,ValueError,json.JSONDecodeError):
         logger.exception("Settings file could not be read; using defaults")
@@ -211,6 +333,26 @@ def _finite_coordinate(value: Any) -> float | None:
     if not math.isfinite(number) or number < 0.0 or number > 1.0:
         return None
     return round(number, 7)
+
+
+def _bounded_number(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(number):
+        return default
+    return round(max(minimum, min(maximum, number)), 3)
+
+
+def _navigation_coordinate_point(value: Any) -> dict[str, float] | None:
+    if not isinstance(value, dict):
+        return None
+    x = _finite_coordinate(value.get("x"))
+    y = _finite_coordinate(value.get("y"))
+    if x is None or y is None:
+        return None
+    return {"x": x, "y": y}
 
 
 def sanitise_navigation(payload: Any, revision: int | None = None) -> dict[str, Any]:
@@ -263,6 +405,46 @@ def sanitise_navigation(payload: Any, revision: int | None = None) -> dict[str, 
                     point["runway"] = {"sx": sx, "sy": sy, "ex": ex, "ey": ey}
             points.append(point)
     result["points"] = points
+
+    carrier_raw = payload.get("carrier", {}) if isinstance(payload.get("carrier"), dict) else {}
+    carrier = deep_copy(DEFAULT_NAVIGATION["carrier"])
+    carrier["enabled"] = bool(carrier_raw.get("enabled", False))
+    carrier["name"] = str(carrier_raw.get("name") or "CARRIER")[:48]
+    carrier["stern"] = _navigation_coordinate_point(carrier_raw.get("stern"))
+    carrier["bow"] = _navigation_coordinate_point(carrier_raw.get("bow"))
+    carrier["deck_altitude_m"] = _bounded_number(carrier_raw.get("deck_altitude_m"), 20.0, -100.0, 5000.0)
+    carrier["glidepath_deg"] = _bounded_number(carrier_raw.get("glidepath_deg"), 3.5, 1.5, 8.0)
+    carrier["touchdown_offset_m"] = _bounded_number(carrier_raw.get("touchdown_offset_m"), 65.0, 0.0, 500.0)
+    carrier["approach_distance_m"] = _bounded_number(carrier_raw.get("approach_distance_m"), 12000.0, 1000.0, 50000.0)
+    carrier["callouts_enabled"] = bool(carrier_raw.get("callouts_enabled", True))
+    carrier["waveoff_enabled"] = bool(carrier_raw.get("waveoff_enabled", True))
+    carrier["landing_grade_enabled"] = bool(carrier_raw.get("landing_grade_enabled", True))
+    profile_raw = carrier_raw.get("profile", {}) if isinstance(carrier_raw.get("profile"), dict) else {}
+    profile = carrier["profile"]
+    profile["approach_ias_min"] = _bounded_number(profile_raw.get("approach_ias_min"), 190.0, 40.0, 1000.0)
+    profile["approach_ias_max"] = _bounded_number(profile_raw.get("approach_ias_max"), 310.0, 50.0, 1200.0)
+    if profile["approach_ias_max"] < profile["approach_ias_min"]:
+        profile["approach_ias_min"], profile["approach_ias_max"] = profile["approach_ias_max"], profile["approach_ias_min"]
+    profile["target_aoa_deg"] = _bounded_number(profile_raw.get("target_aoa_deg"), 8.0, -10.0, 40.0)
+    profile["aoa_tolerance_deg"] = _bounded_number(profile_raw.get("aoa_tolerance_deg"), 2.5, 0.5, 15.0)
+    profile["max_bank_deg"] = _bounded_number(profile_raw.get("max_bank_deg"), 12.0, 1.0, 60.0)
+    profile["max_sink_mps"] = _bounded_number(profile_raw.get("max_sink_mps"), -7.0, -30.0, -0.5)
+    profile["lineup_tolerance_m"] = _bounded_number(profile_raw.get("lineup_tolerance_m"), 35.0, 5.0, 500.0)
+    last_grade = carrier_raw.get("last_grade")
+    if isinstance(last_grade, dict):
+        carrier["last_grade"] = {
+            "score": int(_bounded_number(last_grade.get("score"), 0, 0, 100)),
+            "result": str(last_grade.get("result") or "APPROACH")[:32],
+            "timestamp": _bounded_number(last_grade.get("timestamp"), time.time(), 0, 99999999999),
+            "sink_mps": _bounded_number(last_grade.get("sink_mps"), 0, -100, 100),
+            "ias_kmh": _bounded_number(last_grade.get("ias_kmh"), 0, 0, 5000),
+            "cross_track_m": _bounded_number(last_grade.get("cross_track_m"), 0, -100000, 100000),
+            "glide_error_m": _bounded_number(last_grade.get("glide_error_m"), 0, -100000, 100000),
+            "bank_deg": _bounded_number(last_grade.get("bank_deg"), 0, -180, 180),
+        }
+    carrier["enabled"] = carrier["enabled"] and carrier["stern"] is not None and carrier["bow"] is not None
+    result["carrier"] = carrier
+    result["version"] = 2
     try:
         active_index = int(payload.get("active_index", 0))
     except (TypeError, ValueError):
@@ -287,6 +469,41 @@ def save_navigation(navigation: dict[str, Any]) -> None:
     temp = NAVIGATION_PATH.with_suffix(".tmp")
     temp.write_text(json.dumps(navigation, indent=2), encoding="utf-8")
     temp.replace(NAVIGATION_PATH)
+
+
+LSO_CALLOUTS: dict[str, str] = {
+    "approaching-final": "Approaching final.",
+    "check-gear": "Check gear.",
+    "check-flaps": "Check flaps.",
+    "three-quarter-mile": "Three quarter mile.",
+    "half-mile": "Half mile.",
+    "quarter-mile": "Quarter mile.",
+    "approaching-ramp": "Approaching the ramp.",
+    "slightly-high": "Slightly high.",
+    "high": "You are high.",
+    "slightly-low": "Slightly low.",
+    "low": "You are low.",
+    "on-glidepath": "On glidepath.",
+    "come-left": "Come left.",
+    "come-right": "Come right.",
+    "lineup-good": "Lineup looks good.",
+    "fast": "You are fast.",
+    "slow": "You are slow.",
+    "watch-speed": "Watch the speed.",
+    "aoa-high": "Angle of attack high.",
+    "aoa-low": "Angle of attack low.",
+    "ease-bank": "Ease the bank.",
+    "wings-level": "Wings level.",
+    "sink-rate": "Check your sink rate.",
+    "power": "Power.",
+    "steady": "Keep it steady.",
+    "wave-off": "Wave off. Wave off.",
+    "bolter": "Bolter.",
+    "arrested": "Aircraft stopped.",
+    "good-pass": "Good pass.",
+}
+
+_lso_last_spoken: dict[str, float] = {}
 
 
 def init_db() -> None:
@@ -511,60 +728,142 @@ class SessionRecorder:
 
 class TelemetryHub:
     def __init__(self) -> None:
-        self.client=None
-        self.latest={"connected":False,"timestamp":time.time(),"vehicle":None,"state":{},"indicators":{},"errors":["starting"]}
-        self.latest_objects=[]; self.latest_map_info={}; self.map_sequence=0
-        self.recorder=SessionRecorder(); self.g_monitor=GPeakMonitor()
-        self.task=None; self.map_task=None; self._stop=asyncio.Event()
-    async def start(self,client):
-        self.client=client; self._stop.clear()
-        self.task=asyncio.create_task(self.run(),name="thunderscope-telemetry-hub")
-        self.map_task=asyncio.create_task(self.run_map(),name="thunderscope-map-hub")
-    async def stop(self):
-        self._stop.set(); tasks=[t for t in (self.task,self.map_task) if t]
-        for t in tasks: t.cancel()
-        for t in tasks:
-            try: await t
-            except asyncio.CancelledError: pass
+        self.client: httpx.AsyncClient | None = None
+        self.latest = {
+            "connected": False,
+            "timestamp": time.time(),
+            "vehicle": None,
+            "state": {},
+            "indicators": {},
+            "errors": ["starting"],
+        }
+        self.latest_objects: list[dict[str, Any]] = []
+        self.latest_map_info: dict[str, Any] = {}
+        self.map_sequence = 0
+        self.recorder = SessionRecorder()
+        self.g_monitor = GPeakMonitor()
+        self.task: asyncio.Task[Any] | None = None
+        self.map_task: asyncio.Task[Any] | None = None
+        self._stop = asyncio.Event()
+
+    async def start(self, client: httpx.AsyncClient) -> None:
+        self.client = client
+        self._stop.clear()
+        self.task = asyncio.create_task(
+            self.run(),
+            name="thunderscope-telemetry-hub",
+        )
+        self.map_task = asyncio.create_task(
+            self.run_map(),
+            name="thunderscope-map-hub",
+        )
+
+    async def stop(self) -> None:
+        self._stop.set()
+        tasks = [task for task in (self.task, self.map_task) if task]
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         self.recorder.finish()
-    async def get_json(self,endpoint):
-        response=await self.client.get(f"{WT_BASE_URL}{endpoint}"); response.raise_for_status(); return response.json()
-    async def snapshot(self):
-        async def get(endpoint):
-            try: return await self.get_json(endpoint)
-            except Exception as exc: return exc
-        sr,ir=await asyncio.gather(get("/state"),get("/indicators"))
-        state=sr if isinstance(sr,dict) else {}; indicators=ir if isinstance(ir,dict) else {}
-        errors=[]
-        if isinstance(sr,Exception): errors.append(f"state: {type(sr).__name__}")
-        if isinstance(ir,Exception): errors.append(f"indicators: {type(ir).__name__}")
-        return {"connected":bool(state.get("valid") or indicators.get("valid")),"timestamp":time.time(),"vehicle":indicators.get("type") or state.get("type"),"state":state,"indicators":indicators,"errors":errors}
-    async def run_map(self):
-        next_info=0.0
-        while not self._stop.is_set():
-            started=time.monotonic(); now=time.time()
+
+    async def get_json(self, endpoint: str) -> Any:
+        if self.client is None:
+            raise RuntimeError("Telemetry client has not started")
+        response = await self.client.get(f"{WT_BASE_URL}{endpoint}")
+        response.raise_for_status()
+        return response.json()
+
+    async def snapshot(self) -> dict[str, Any]:
+        async def get(endpoint: str) -> Any:
             try:
-                if now>=next_info:
-                    objects,info=await asyncio.gather(self.get_json("/map_obj.json"),self.get_json("/map_info.json"),return_exceptions=True); next_info=now+MAP_INFO_POLL_INTERVAL
-                else: objects=await self.get_json("/map_obj.json"); info=None
-                if isinstance(objects,list): self.latest_objects=objects; self.map_sequence+=1; self.recorder.add_map_objects(objects,now)
-                if isinstance(info,dict): self.latest_map_info=info
-            except Exception as exc: logger.debug("Map poll failed: %s",exc)
-            await asyncio.sleep(max(0.01,MAP_OBJECT_POLL_INTERVAL-(time.monotonic()-started)))
-    async def run(self):
+                return await self.get_json(endpoint)
+            except Exception as exc:  # noqa: BLE001
+                return exc
+
+        state_result, indicator_result = await asyncio.gather(
+            get("/state"),
+            get("/indicators"),
+        )
+        state = state_result if isinstance(state_result, dict) else {}
+        indicators = indicator_result if isinstance(indicator_result, dict) else {}
+        errors: list[str] = []
+        if isinstance(state_result, Exception):
+            errors.append(f"state: {type(state_result).__name__}")
+        if isinstance(indicator_result, Exception):
+            errors.append(f"indicators: {type(indicator_result).__name__}")
+        return {
+            "connected": bool(state.get("valid") or indicators.get("valid")),
+            "timestamp": time.time(),
+            "vehicle": indicators.get("type") or state.get("type"),
+            "state": state,
+            "indicators": indicators,
+            "errors": errors,
+        }
+
+    async def run_map(self) -> None:
+        next_info = 0.0
         while not self._stop.is_set():
-            started=time.monotonic()
+            started = time.monotonic()
+            now = time.time()
             try:
-                self.latest=await self.snapshot(); settings=self.audio_settings() if getattr(self,"audio_settings",None) else DEFAULT_SETTINGS
-                profile=dict(settings.get("defaults",{})); vehicle=self.latest.get("vehicle")
-                if vehicle: profile.update(settings.get("profiles",{}).get(vehicle,{}))
-                self.latest["derived"]=self.g_monitor.update(self.latest["timestamp"],bool(self.latest.get("connected")),self.latest.get("state",{}),self.latest.get("indicators",{}),float(profile.get("highG",8.0)),float(profile.get("lowG",-3.0)))
-                self.recorder.update(self.latest); self.recorder.maybe_finish(self.latest["timestamp"]); host_audio.process(self.latest,settings)
-            except Exception as exc: logger.warning("Telemetry poll failed: %s",exc)
-            await asyncio.sleep(max(0.02,POLL_INTERVAL-(time.monotonic()-started)))
+                if now >= next_info:
+                    objects, info = await asyncio.gather(
+                        self.get_json("/map_obj.json"),
+                        self.get_json("/map_info.json"),
+                        return_exceptions=True,
+                    )
+                    next_info = now + MAP_INFO_POLL_INTERVAL
+                else:
+                    objects = await self.get_json("/map_obj.json")
+                    info = None
+                if isinstance(objects, list):
+                    self.latest_objects = objects
+                    self.map_sequence += 1
+                    self.recorder.add_map_objects(objects, now)
+                if isinstance(info, dict):
+                    self.latest_map_info = info
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Map poll failed: %s", exc)
+            elapsed = time.monotonic() - started
+            await asyncio.sleep(max(0.01, MAP_OBJECT_POLL_INTERVAL - elapsed))
+
+    async def run(self) -> None:
+        while not self._stop.is_set():
+            started = time.monotonic()
+            try:
+                self.latest = await self.snapshot()
+                settings = (
+                    self.audio_settings()
+                    if getattr(self, "audio_settings", None)
+                    else DEFAULT_SETTINGS
+                )
+                profile = dict(settings.get("defaults", {}))
+                vehicle = self.latest.get("vehicle")
+                if vehicle:
+                    profile.update(settings.get("profiles", {}).get(vehicle, {}))
+                self.latest["derived"] = self.g_monitor.update(
+                    self.latest["timestamp"],
+                    bool(self.latest.get("connected")),
+                    self.latest.get("state", {}),
+                    self.latest.get("indicators", {}),
+                    float(profile.get("highG", 8.0)),
+                    float(profile.get("lowG", -3.0)),
+                )
+                self.recorder.update(self.latest)
+                self.recorder.maybe_finish(self.latest["timestamp"])
+                host_audio.process(self.latest, settings)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Telemetry poll failed: %s", exc)
+            elapsed = time.monotonic() - started
+            await asyncio.sleep(max(0.02, POLL_INTERVAL - elapsed))
 
 hub = TelemetryHub()
 host_audio = HostAudioService(BASE_DIR, logger)
+input_bridge = InputBridge()
 
 
 @asynccontextmanager
@@ -577,12 +876,13 @@ async def lifespan(app: FastAPI):
     app.state.client = httpx.AsyncClient(
         timeout=httpx.Timeout(1.5, connect=0.5),
         limits=httpx.Limits(max_connections=24, max_keepalive_connections=12),
-        headers={"User-Agent": "ThunderScope/0.11.0"},
+        headers={"User-Agent": "ThunderScope/0.13.4"},
     )
     await hub.start(app.state.client)
     logger.info("War Thunder source: %s", WT_BASE_URL)
     yield
     await hub.stop()
+    await asyncio.to_thread(input_bridge.release_all)
     await host_audio.stop()
     await app.state.client.aclose()
 
@@ -590,7 +890,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ThunderScope",
     description="Local War Thunder telemetry, tactical-map and flight-analysis dashboard",
-    version="0.11.0",
+    version="0.13.4",
     lifespan=lifespan,
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -650,11 +950,14 @@ async def service_worker() -> FileResponse:
 @app.get("/api/server-info")
 async def server_info(request: Request) -> dict[str, Any]:
     port = request.url.port or 80
+    lan_addresses = [f"http://{ip}:{port}" for ip in lan_ipv4_addresses()]
+    lan_map_addresses = [f"{address}/map" for address in lan_addresses]
     return {
         "name": "ThunderScope",
         "version": app.version,
         "war_thunder_source": WT_BASE_URL,
-        "lan_addresses": [f"http://{ip}:{port}" for ip in lan_ipv4_addresses()],
+        "lan_addresses": lan_addresses,
+        "lan_map_addresses": lan_map_addresses,
     }
 
 
@@ -763,12 +1066,19 @@ async def put_settings(request: Request, payload: dict[str, Any] = Body(...)) ->
         or not isinstance(payload.get("profiles", {}), dict)
         or not isinstance(payload.get("display", {}), dict)
         or not isinstance(payload.get("audio", {}), dict)
+        or not isinstance(payload.get("controls", {}), dict)
     ):
         raise HTTPException(status_code=400, detail="Invalid settings structure")
     merged = deep_copy(DEFAULT_SETTINGS)
     merged["defaults"].update(payload.get("defaults", {}))
     merged["display"].update(payload.get("display", {}))
     merged["audio"].update(payload.get("audio", {}))
+    controls_payload = payload.get("controls", {})
+    merged["controls"].update({key: value for key, value in controls_payload.items() if key != "actions"})
+    if isinstance(controls_payload.get("actions"), dict):
+        for action_name, action_value in controls_payload["actions"].items():
+            if action_name in merged["controls"]["actions"] and isinstance(action_value, dict):
+                merged["controls"]["actions"][action_name].update(action_value)
     merged["profiles"] = payload.get("profiles", {})
     save_settings(merged)
     request.app.state.settings = merged
@@ -814,6 +1124,75 @@ async def audio_chatter_test() -> dict[str, Any]:
     return {"queued": True, "host_only": True, **selected}
 
 
+@app.post("/api/audio/lso")
+async def audio_lso(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    key = str(payload.get("key") or "").strip().lower()
+    phrase = LSO_CALLOUTS.get(key)
+    if phrase is None:
+        raise HTTPException(status_code=400, detail="Unknown LSO callout key.")
+    settings = request.app.state.settings
+    audio = settings.get("audio", {}) if isinstance(settings, dict) else {}
+    if not audio.get("enabled", True) or not audio.get("lsoEnabled", True):
+        return {"queued": False, "key": key, "disabled": True}
+    now = time.monotonic()
+    requested_cooldown = _bounded_number(payload.get("cooldown_seconds"), 3.0, 0.5, 30.0)
+    if now - _lso_last_spoken.get(key, -9999.0) < requested_cooldown:
+        return {"queued": False, "key": key, "cooldown": True}
+    _lso_last_spoken[key] = now
+    host_audio.enqueue(
+        f"lso-{key}", phrase,
+        priority=1 if key == "wave-off" else 3,
+        force=True,
+        voice_override=str(audio.get("lsoVoice", "")),
+        rate_override=int(audio.get("lsoRate", -1)),
+        volume_override=int(audio.get("lsoVolume", 92)),
+        allow_custom_wav=True,
+    )
+    return {"queued": True, "key": key, "phrase": phrase, "host_only": True}
+
+
+@app.get("/api/controls/status")
+async def controls_status(request: Request) -> dict[str, Any]:
+    controls = request.app.state.settings.get("controls", {})
+    return {**input_bridge.status(), "enabled": bool(controls.get("enabled", True)), "actions": controls.get("actions", {})}
+
+
+@app.post("/api/controls/input")
+async def controls_input(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    controls = request.app.state.settings.get("controls", {})
+    if not controls.get("enabled", True):
+        raise HTTPException(status_code=403, detail="Virtual cockpit controls are disabled in Settings.")
+    if not input_bridge.supported:
+        raise HTTPException(status_code=503, detail="Virtual cockpit controls currently require a Windows host.")
+    action_name = str(payload.get("action") or "").strip()
+    action = controls.get("actions", {}).get(action_name)
+    if not isinstance(action, dict):
+        raise HTTPException(status_code=400, detail="Unknown control action.")
+    key = normalise_key_name(action.get("key"))
+    if not key_spec_valid(key):
+        raise HTTPException(status_code=400, detail=f"Control {action_name} has no supported key binding.")
+    event = str(payload.get("event") or "tap").strip().lower()
+    configured_mode = str(action.get("mode") or "tap").strip().lower()
+    try:
+        if event == "down":
+            sent = await asyncio.to_thread(input_bridge.key_down, key)
+        elif event == "up":
+            sent = await asyncio.to_thread(input_bridge.key_up, key)
+        elif event == "tap":
+            sent = await asyncio.to_thread(input_bridge.tap, key)
+        else:
+            raise HTTPException(status_code=400, detail="Control event must be tap, down, or up.")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"sent": True, "action": action_name, "key": sent, "mode": configured_mode, "event": event}
+
+
+@app.post("/api/controls/release-all")
+async def controls_release_all() -> dict[str, Any]:
+    await asyncio.to_thread(input_bridge.release_all)
+    return {"released": True}
+
+
 @app.get("/api/diagnostics")
 async def diagnostics() -> dict[str, Any]:
     return {
@@ -828,6 +1207,7 @@ async def diagnostics() -> dict[str, Any]:
         "map_poll_hz": round(1 / MAP_OBJECT_POLL_INTERVAL, 1),
         "map_stream_hz": round(1 / MAP_STREAM_INTERVAL, 1),
         "map_objects": len(hub.latest_objects),
+        "lan_security": {"enabled": False, "mode": "trusted-local-network"},
         "recording_session": hub.recorder.active.get("id") if hub.recorder.active else None,
         "host_audio": host_audio.status(),
     }
@@ -923,6 +1303,8 @@ if __name__ == "__main__":
     print(f"  Voice settings:  http://127.0.0.1:{port}/settings")
     if host in {"0.0.0.0", "::"}:
         for ip in lan_ipv4_addresses():
-            print(f"  Tablet map:      http://{ip}:{port}/map")
+            address = f"http://{ip}:{port}/map"
+            print(f"  Tablet map:      {address}")
+        print("  LAN control:     open on the local network (no token)")
     print("  Press Ctrl+C to stop.\n")
     uvicorn.run("app:app", host=host, port=port, reload=False, access_log=False)

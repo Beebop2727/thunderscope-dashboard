@@ -1,4 +1,25 @@
+# Python
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# OS/editor files
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ThunderScope generated runtime state
+data/*
+!data/README.txt
+!data/settings.example.json
+
+# Bundled VAICOM library is distributed in full releases, not source clones
+audio/radio/vaicom/
+
+# Local logs and release artifacts
+*.log
+*.zip
+*.sha256
